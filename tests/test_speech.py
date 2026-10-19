@@ -1,0 +1,107 @@
+import array
+import math
+import os
+import tempfile
+import unittest
+
+from fastapi.testclient import TestClient
+
+from server.main import create_app
+from server.speech import adapt_audience, choose_next_practice, measure_speech
+
+
+def pcm_with_gap(sample_rate=16000):
+    tone = array.array("h")
+    gap = array.array("h")
+    for index in range(sample_rate):
+        tone.append(int(9000 * math.sin(2 * math.pi * 180 * index / sample_rate)))
+    for _ in range(int(sample_rate * 0.9)):
+        gap.append(0)
+    return (tone + gap + tone).tobytes()
+
+
+class SpeechRules(unittest.TestCase):
+    def test_empty_transcript_is_not_scored(self):
+        self.assertIsNone(measure_speech("  ", []))
+
+    def test_fast_speech_asks_for_the_last_point(self):
+        action = adapt_audience(
+            {"pace": 210, "pauses": 0, "repeated": 0, "clarity": 0.9}, 2, 0
+        )
+        self.assertEqual(action["line"], "ممكن تعيد النقطة الأخيرة؟")
+
+    def test_a_steady_level_lets_every_listener_speak(self):
+        features = {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9}
+        roles = [adapt_audience(features, 1, turn)["role"] for turn in range(4)]
+        self.assertEqual(roles, ["interested", "uninterested", "curious", "skeptical"])
+        later = [adapt_audience(features, 2, turn)["role"] for turn in range(6)]
+        self.assertIn("interrupter", later)
+        self.assertIn("supportive", later)
+
+    def test_many_pauses_ask_the_user_to_continue(self):
+        action = adapt_audience(
+            {"pace": 130, "pauses": 4, "repeated": 0, "clarity": 0.8}, 1, 0
+        )
+        self.assertEqual(action["role"], "curious")
+        self.assertIn("كمّل", action["line"])
+
+    def test_next_practice_follows_the_weak_skill(self):
+        pace = choose_next_practice(
+            {"pace": 0.2, "pauses": 0.8, "clarity": 0.8, "organization": 0.8, "interruptions": 0.8, "confidence": 0.7},
+            0.5,
+        )
+        clarity = choose_next_practice(
+            {"pace": 0.9, "pauses": 0.9, "clarity": 0.2, "organization": 0.8, "interruptions": 0.8, "confidence": 0.6},
+            None,
+        )
+        interruptions = choose_next_practice(
+            {"pace": 0.9, "pauses": 0.9, "clarity": 0.9, "organization": 0.9, "interruptions": 0.1, "confidence": 0.55},
+            0.4,
+        )
+        self.assertEqual(pace["next_level"], 1)
+        self.assertEqual(clarity["next_level"], 2)
+        self.assertEqual(interruptions["next_level"], 3)
+        self.assertEqual(pace["change"], 20)
+
+    def test_a_silent_turn_is_not_scored_and_a_loud_turn_is(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".sqlite")
+        client = TestClient(create_app(tmp.name))
+        token = client.post(
+            "/api/register", json={"username": "Ohud", "password": "practice1"}
+        ).json()["token"]
+        headers = {"Authorization": "Bearer %s" % token}
+        client.put(
+            "/api/profile",
+            headers=headers,
+            json={
+                "gender": "female",
+                "age_group": "18_plus",
+                "avatar": {"skin": "medium", "hair": "long", "outfit": "navy"},
+                "mode": "normal",
+            },
+        )
+        opened = client.post("/api/sessions", headers=headers, json={"level": 2})
+        self.assertEqual(opened.status_code, 200, opened.text)
+        session_id = opened.json()["session_id"]
+        silent = client.post(
+            "/api/sessions/%s/turn" % session_id,
+            headers=dict(headers, **{"X-Sample-Rate": "16000"}),
+            content=b"\x00\x00" * 16000,
+        )
+        self.assertTrue(silent.json()["empty"])
+        spoken = client.post(
+            "/api/sessions/%s/turn" % session_id,
+            headers=dict(headers, **{"X-Sample-Rate": "16000"}),
+            content=pcm_with_gap(),
+        )
+        self.assertFalse(spoken.json()["empty"])
+        self.assertGreaterEqual(spoken.json()["pauses"], 1)
+        finished = client.post("/api/sessions/%s/finish" % session_id, headers=headers)
+        self.assertEqual(finished.json()["turns"], 1)
+        self.assertIsNone(finished.json()["report"])
+        tmp.close()
+        os.environ.pop("SIM_DB", None)
+
+
+if __name__ == "__main__":
+    unittest.main()
