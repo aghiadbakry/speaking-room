@@ -62,6 +62,18 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             "SELECT COUNT(*) AS n FROM turns WHERE session_id = ? AND scored = 1",
             (session_id,),
         ).fetchone()["n"]
+        recent = [
+            row["line"]
+            for row in conn.execute(
+                """
+                SELECT line FROM turns
+                WHERE session_id = ? AND scored = 1 AND line IS NOT NULL
+                ORDER BY id DESC LIMIT 4
+                """,
+                (session_id,),
+            ).fetchall()
+            if row["line"]
+        ]
     if render_api():
         heard = transcribe_pcm(pcm, sample_rate)
         if isinstance(heard, dict) and heard.get("empty"):
@@ -81,7 +93,13 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             "line": "لم يُلتقط كلام. تحدّث مرة أخرى. هذه اللقطة لا تُحسب.",
             "role": None,
         }, None
-    action = adapt_audience(features, session["level"], asked)
+    action = adapt_audience(
+        features,
+        session["level"],
+        asked,
+        features.get("transcript", ""),
+        recent,
+    )
     with connect(path) as conn:
         conn.execute(
             """

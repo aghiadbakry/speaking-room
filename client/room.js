@@ -49,6 +49,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   let mixers = [];
   const sitBend = new THREE.Quaternion();
   const sitAxis = new THREE.Vector3(1, 0, 0);
+  const yawQuat = new THREE.Quaternion();
+  const yawAxis = new THREE.Vector3(0, 1, 0);
   let libraryPromise = null;
 
   function cloth(color) {
@@ -283,6 +285,28 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       wave.clampWhenFinished = true;
     }
     mixers.push(mixer);
+    if (options.seated) {
+      mixer.update(0);
+      ["UpperLegL", "UpperLegR"].forEach((name) => {
+        if (!bones[name]) return;
+        sitBend.setFromAxisAngle(sitAxis, -0.85);
+        bones[name].quaternion.multiply(sitBend);
+      });
+      ["LowerLegL", "LowerLegR"].forEach((name) => {
+        if (!bones[name]) return;
+        sitBend.setFromAxisAngle(sitAxis, 1.05);
+        bones[name].quaternion.multiply(sitBend);
+      });
+    }
+    const seatedPose = {};
+    if (options.seated) {
+      Object.keys(bones).forEach((name) => {
+        seatedPose[name] = {
+          q: bones[name].quaternion.clone(),
+          p: bones[name].position.clone(),
+        };
+      });
+    }
     group.updateWorldMatrix(true, true);
     let bubbleY = 1.55;
     if (bones.Head) {
@@ -301,6 +325,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       wave: wave,
       waving: false,
       seated: !!options.seated,
+      seatedPose: seatedPose,
       bubbleY: bubbleY,
     };
     mixer.addEventListener("finished", (event) => {
@@ -315,10 +340,10 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   function placePeople(session) {
     const gen = generation;
     const count = COUNTS[session.level.level] || 4;
-    const seats = count <= 4 ? [-2.35, -1.2, 1.2, 2.35] : [-3.35, -2.2, -1.15, 1.15, 2.2, 3.35];
-    const z = -1.7;
+    const seats = count <= 4 ? [-3.15, -1.85, 1.85, 3.15] : [-3.7, -2.55, -1.7, 1.7, 2.55, 3.7];
+    const z = -2.05;
     people = [];
-    deskRow(z, count <= 4 ? 5.6 : 8);
+    deskRow(z, count <= 4 ? 7.4 : 8.8);
     for (let seat = 0; seat < count; seat += 1) scene.add(chair(seats[seat], z));
     loadLibrary().then((lib) => {
       if (gen !== generation || !scene) return;
@@ -363,27 +388,29 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     }));
   }
 
+  function isArm(name) {
+    return /Arm|Hand|Shoulder|Clavicle|Thumb|Index|Middle|Ring|Pinky|Finger/i.test(name);
+  }
+
   function applyPose(member, time) {
     const data = member.userData;
     const bones = data.bones || {};
-    if (data.seated) {
-      ["UpperLegL", "UpperLegR"].forEach((name) => {
-        if (!bones[name]) return;
-        sitBend.setFromAxisAngle(sitAxis, -0.85);
-        bones[name].quaternion.multiply(sitBend);
-      });
-      ["LowerLegL", "LowerLegR"].forEach((name) => {
-        if (!bones[name]) return;
-        sitBend.setFromAxisAngle(sitAxis, 1.05);
-        bones[name].quaternion.multiply(sitBend);
-      });
-    }
-    const head = bones.Head;
+    const pose = data.seatedPose || {};
     const active = member === activeMember;
-    if (head) {
-      if (data.role === "uninterested" && !active) head.rotation.y = 0.7;
-      else if (active) head.rotation.x = Math.sin(time * 3.2) * 0.1;
-      else head.rotation.y = Math.sin(time * 0.6 + data.phase) * 0.12;
+    if (data.seated) {
+      Object.keys(pose).forEach((name) => {
+        if (isArm(name) || name === "Head" || !bones[name]) return;
+        bones[name].quaternion.copy(pose[name].q);
+        bones[name].position.copy(pose[name].p);
+      });
+      if (bones.Head && pose.Head) {
+        let yaw = Math.sin(time * 0.6 + data.phase) * 0.08;
+        if (data.role === "uninterested" && !active) yaw = 0.22;
+        if (active) yaw = Math.sin(time * 3) * 0.05;
+        yawQuat.setFromAxisAngle(yawAxis, yaw);
+        bones.Head.quaternion.copy(pose.Head.q).multiply(yawQuat);
+        bones.Head.position.copy(pose.Head.p);
+      }
     }
     if (active && data.wave && !data.waving) {
       data.waving = true;
@@ -571,9 +598,20 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       transparent: true,
       depthWrite: false,
     }));
-    sprite.position.set(0, member.userData.bubbleY || 1.62, 0.28);
+    let bubbleY = member.userData.bubbleY || 1.7;
+    const head = member.userData.bones && member.userData.bones.Head;
+    if (head) {
+      member.updateWorldMatrix(true, true);
+      const point = new THREE.Vector3();
+      head.getWorldPosition(point);
+      member.worldToLocal(point);
+      bubbleY = point.y + 0.46;
+    }
+    sprite.position.set(0, bubbleY, 0);
     sprite.center.set(0.5, 0.02);
-    sprite.scale.set(2.15, 1.08, 1);
+    sprite.scale.set(1.55, 0.78, 1);
+    sprite.userData.baseW = 1.55;
+    sprite.userData.baseH = 0.78;
     sprite.userData.grow = 1;
     member.add(sprite);
     comment = sprite;
@@ -592,7 +630,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       const grow = comment.userData.grow;
       const pop = (1 - Math.pow(1 - grow, 3)) * (grow < 1 ? 1.06 : 1);
       const popped = 0.82 + 0.18 * pop;
-      comment.scale.set(2.15 * popped, 1.08 * popped, 1);
+      const baseW = comment.userData.baseW || 1.55;
+      const baseH = comment.userData.baseH || 0.78;
+      comment.scale.set(baseW * popped, baseH * popped, 1);
       comment.position.y = (comment.parent && comment.parent.userData.bubbleY || 1.62) + Math.sin(time * 2.2) * 0.02;
     }
     const presenting = renderer.xr && renderer.xr.isPresenting;

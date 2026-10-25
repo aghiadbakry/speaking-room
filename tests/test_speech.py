@@ -71,6 +71,33 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(interruptions["next_level"], 3)
         self.assertEqual(pace["change"], 20)
 
+    def test_render_comment_follows_the_words_just_said(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("المشروع يوفر الوقت", prompt)
+            self.assertIn("لم تصلني الفكرة", prompt)
+            return "ما الوقت الذي يوفره المشروع؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                1,
+                1,
+                "المشروع يوفر الوقت",
+                ["لم تصلني الفكرة. أين النتيجة؟"],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "uninterested")
+        self.assertEqual(action["line"], "ما الوقت الذي يوفره المشروع؟")
+
     def test_whisper_words_keep_a_real_pause(self):
         features = features_from_whisper_json(
             {

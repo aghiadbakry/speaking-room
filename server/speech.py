@@ -420,7 +420,53 @@ def judge_session(transcript):
     return _parse_judgement(raw)
 
 
-def adapt_audience(features, level, asked):
+def _audience_line(role, transcript, intent, recent, features):
+    """On Render, one new sentence about what was just said. Local stays on the fixed line."""
+    if not render_api():
+        return ""
+    voices = {
+        "interested": "مهتم، وتريد متابعة نقطة قالها المتحدث",
+        "uninterested": "غير مهتم، وتريد خلاصة النقطة التي قالها",
+        "curious": "فضولي، وتريد تفصيلاً ورد في كلامه",
+        "skeptical": "مشكك، وتريد دليلاً على نقطة قالها",
+        "interrupter": "تقاطع بسؤال أصعب عن نقطة قالها",
+        "supportive": "داعم، وتشجع نقطة قالها ثم تطلب الإكمال",
+    }
+    heard = (transcript or "").strip()
+    if not heard:
+        heard = "لا يوجد نص. علّق على الإلقاء: السرعة %.0f كلمة في الدقيقة، والتوقفات %s." % (
+            features.get("pace", 0),
+            features.get("pauses", 0),
+        )
+    previous = " | ".join(recent[:4]) if recent else "لا يوجد"
+    return _ask_groq(
+        "أنت شخص واحد في الجمهور. شخصيتك: %s.\n"
+        "كلام المتحدث الآن: %s\n"
+        "غاية ردك: %s\n"
+        "لا تكرر أياً من هذه الجمل: %s\n"
+        "اكتب جملة عربية واحدة جديدة عن كلام المتحدث نفسه."
+        % (voices.get(role, role), heard[:700], intent, previous),
+        first_line_only=True,
+    )
+
+
+def adapt_audience(features, level, asked, transcript="", recent=None):
+    """Chapter 3 chooses the listener. Render then writes a line about the speech."""
+    result = _adapt_rules(features, level, asked)
+    recent = recent or []
+    spoken = _audience_line(result["role"], transcript, result["line"], recent, features)
+    if spoken and spoken not in recent:
+        result["line"] = spoken
+    elif result["line"] in recent:
+        choices = PERSONALITY.get(result["role"], [])
+        for choice in choices:
+            if choice not in recent:
+                result["line"] = choice
+                break
+    return result
+
+
+def _adapt_rules(features, level, asked):
     """Chapter 3 adaptAudience. The caller already rejected an empty turn."""
     stress, confidence = estimate(features)
     level = max(1, min(3, int(level)))
@@ -475,11 +521,14 @@ def adapt_audience(features, level, asked):
     present = present_roles(level)
     role = present[int(asked) % len(present)]
     if role == "interrupter":
-        prompt = (
-            "اكتب سؤالاً واحداً أصعب لجمهور يتدرب أمامه متحدث. "
-            "السؤال فقط، بدون مقدمة."
-        )
-        line = _qwen(prompt) or bank[min(asked, len(bank) - 1)]
+        if render_api():
+            line = bank[min(int(asked), len(bank) - 1)]
+        else:
+            prompt = (
+                "اكتب سؤالاً واحداً أصعب لجمهور يتدرب أمامه متحدث. "
+                "السؤال فقط، بدون مقدمة."
+            )
+            line = _qwen(prompt) or bank[min(asked, len(bank) - 1)]
         interruptions = "more"
     elif role == "curious":
         extra = PERSONALITY["curious"]
