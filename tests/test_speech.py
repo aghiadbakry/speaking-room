@@ -226,6 +226,82 @@ class SpeechRules(unittest.TestCase):
         tmp.close()
         os.environ.pop("SIM_DB", None)
 
+    def test_collapsed_word_times_cannot_report_an_extreme_pace(self):
+        features = features_from_whisper_json(
+            {
+                "text": "واحد اثنين ثلاثة أربعة",
+                "words": [
+                    {"word": "واحد", "start": 0.0, "end": 0.01},
+                    {"word": "اثنين", "start": 0.02, "end": 0.03},
+                    {"word": "ثلاثة", "start": 0.04, "end": 0.05},
+                    {"word": "أربعة", "start": 0.06, "end": 0.07},
+                ],
+            },
+            "whisper-large-v3",
+        )
+        self.assertLess(features["pace"], 250)
+
+    def test_the_committee_opens_the_discussion_and_the_interview(self):
+        from server.speech import opening_for
+
+        discussion = opening_for("Graduation-project discussion")
+        interview = opening_for("Job interview")
+        self.assertEqual(discussion["line"], "ما موضوع مشروع التخرج؟")
+        self.assertEqual(interview["line"], "ما الوظيفة التي تتقدم لها؟")
+        self.assertIsNone(opening_for("A short presentation"))
+
+    def test_level_three_asks_about_the_answer_and_waits(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("أحد أعضاء اللجنة", prompt)
+            self.assertIn("وظيفة محلل", prompt)
+            return "ما الخبرة الأقرب إلى التحليل؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                0,
+                "وظيفة محلل بيانات",
+                [],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["line"], "ما الخبرة الأقرب إلى التحليل؟")
+        self.assertEqual(action["reply_seconds"], 8)
+
+    def test_a_level_two_turn_without_words_still_asks_a_question(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fail(prompt, first_line_only):
+            raise AssertionError(prompt)
+
+        original = speech._ask_groq
+        speech._ask_groq = fail
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                2,
+                0,
+                "",
+                [],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["line"], "ما الخطوة التالية في هذا العمل؟")
+        self.assertEqual(action["role"], "curious")
+
 
 if __name__ == "__main__":
     unittest.main()

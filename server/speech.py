@@ -92,7 +92,7 @@ def measure_speech(transcript, timings):
     if not words:
         return None
     if timings:
-        span = max(float(timings[-1]["end"]) - float(timings[0]["start"]), 0.1)
+        span = max(float(timings[-1]["end"]) - float(timings[0]["start"]), len(words) * 0.32, 0.4)
     else:
         span = max(len(words) * 0.45, 0.1)
     minutes = span / 60.0
@@ -420,7 +420,27 @@ def judge_session(transcript):
     return _parse_judgement(raw)
 
 
-def _audience_line(role, transcript, intent, recent, features):
+def opening_for(task):
+    """Level 2 and 3 begin with the committee, before the speaker answers."""
+    table = {
+        "Explain a school project": ("curious", "ما المشروع الذي ستشرحه؟"),
+        "Graduation-project discussion": ("curious", "ما موضوع مشروع التخرج؟"),
+        "Present to the class": ("interested", "ما موضوع عرضك أمام الفصل؟"),
+        "Job interview": ("skeptical", "ما الوظيفة التي تتقدم لها؟"),
+    }
+    found = table.get(task)
+    if not found:
+        return None
+    return {"role": found[0], "line": found[1]}
+
+
+FOLLOW_UP = {
+    2: ["ما الخطوة التالية في هذا العمل؟", "ما الصعوبة التي واجهتها فيه؟"],
+    3: ["لماذا يناسبك هذا العمل؟", "ما الخبرة الأقرب إلى ما ذكرته؟"],
+}
+
+
+def _audience_line(role, transcript, intent, recent, features, level=1):
     """On Render, one new sentence about what was just said. Local stays on the fixed line."""
     if not render_api():
         return ""
@@ -436,6 +456,16 @@ def _audience_line(role, transcript, intent, recent, features):
         "supportive": "مستمع يشجع الفكرة التي قيلت ويطلب إكمالها.",
     }
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
+    if int(level) >= 2:
+        return _ask_groq(
+            "أنت أحد أعضاء اللجنة، وأنت من يسأل.\n"
+            "جواب المتحدث: «%s»\n"
+            "اسأل سؤالاً واحداً قصيراً عن هذا الجواب فقط.\n"
+            "في مناقشة المشروع اسأل عن المشروع. في المقابلة اسأل عن الوظيفة والعمل.\n"
+            "لا تكرر: %s"
+            % (heard[:700], previous),
+            first_line_only=True,
+        )
     return _ask_groq(
         "أنت تستمع إلى المتحدث الآن.\n"
         "قال حرفياً: «%s»\n"
@@ -463,17 +493,24 @@ def adapt_audience(features, level, asked, transcript="", recent=None):
     result = _adapt_rules(features, level, asked)
     recent = recent or []
     spoken = _usable_line(
-        _audience_line(result["role"], transcript, result["line"], recent, features),
+        _audience_line(result["role"], transcript, result["line"], recent, features, level),
         recent,
     )
     if spoken:
         result["line"] = spoken
+    elif int(level) >= 2 and render_api():
+        bank = FOLLOW_UP[int(level)]
+        choice = bank[int(asked) % len(bank)]
+        if choice not in recent:
+            result["line"] = choice
+            result["role"] = resolve_role("curious" if int(level) == 2 else "skeptical", level)
     elif result["line"] in recent:
         choices = PERSONALITY.get(result["role"], [])
         for choice in choices:
             if choice not in recent:
                 result["line"] = choice
                 break
+    result["reply_seconds"] = 8 if int(level) >= 2 else 6
     return result
 
 

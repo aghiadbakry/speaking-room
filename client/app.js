@@ -406,7 +406,7 @@ function showRoom(session) {
         </aside>
         <aside class="panel corner smart">
           <strong class="panel-title">رد الجمهور</strong>
-          <p id="heard">سيظهر رد أحد المستمعين هنا بعد أن تتحدث.</p>
+          <p id="heard">المستوى الأول: تحدّث، ثم يصلك رد واحد.</p>
         </aside>
         <div class="dock">
           <div class="transcript" id="transcript">
@@ -456,6 +456,13 @@ function showRoom(session) {
     document.querySelector("#transcript").classList.toggle("hidden");
   };
   document.querySelector("#leave").onclick = () => finishLevel();
+  if (session.opening) {
+    const heard = document.querySelector("#heard");
+    const tip = document.querySelector("#tip");
+    if (heard) heard.textContent = session.opening.line;
+    if (tip) tip.textContent = "اللجنة تسأل أولاً. أجب، ثم انتظر السؤال التالي.";
+    setTimeout(() => SpeakingRoom.react(session.opening.role, session.opening.line), 700);
+  }
 
   async function finishLevel() {
     clearInterval(timer);
@@ -523,7 +530,8 @@ async function toggleMic(sessionId) {
   const processor = context.createScriptProcessor(4096, 1, 1);
   const silent = context.createGain();
   silent.gain.value = 0;
-  const state = { listening: true, buffer: [], samples: 0, processor, source, stream, context };
+  const answerSeconds = session.level.level >= 2 ? 12 : 9;
+  const state = { listening: true, buffer: [], samples: 0, processor, source, stream, context, sending: false, gapUntil: 0, answerSeconds };
   micState = state;
   processor.onaudioprocess = (event) => {
     if (!state.listening) return;
@@ -533,11 +541,15 @@ async function toggleMic(sessionId) {
     let energy = 0;
     for (let index = 0; index < channel.length; index += 1) energy += channel[index] * channel[index];
     pushWave(Math.sqrt(energy / channel.length));
-    if (state.samples > context.sampleRate * 3.2) {
+    if (state.sending || Date.now() < state.gapUntil) return;
+    if (state.samples > context.sampleRate * state.answerSeconds) {
       const taken = state.buffer;
       state.buffer = [];
       state.samples = 0;
-      sendChunk(sessionId, taken, context.sampleRate);
+      state.sending = true;
+      sendChunk(sessionId, taken, context.sampleRate).finally(() => {
+        state.sending = false;
+      });
     }
   };
   source.connect(processor);
@@ -585,6 +597,11 @@ async function sendChunk(sessionId, parts, sampleRate) {
     if (heard) heard.textContent = data.line;
     SpeakingRoom.react(null);
     document.querySelectorAll(".audience-row").forEach((row) => row.classList.remove("active"));
+    if (micState) {
+      micState.gapUntil = Date.now() + 6000;
+      micState.buffer = [];
+      micState.samples = 0;
+    }
     return;
   }
   const speaker = SpeakingRoom.react(data.role, data.line);
@@ -602,6 +619,11 @@ async function sendChunk(sessionId, parts, sampleRate) {
   const pauses = document.querySelector("#pause-label");
   if (pace) pace.textContent = `${Math.round(data.pace)}`;
   if (pauses) pauses.textContent = String(data.pauses);
+  if (micState) {
+    micState.gapUntil = Date.now() + (data.reply_seconds || 12) * 1000;
+    micState.buffer = [];
+    micState.samples = 0;
+  }
   const clarityBar = document.querySelector("#clarity-bar");
   const clarityLabel = document.querySelector("#clarity-label");
   if (clarityBar) clarityBar.style.width = `${percent(data.clarity)}%`;

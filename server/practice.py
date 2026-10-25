@@ -8,6 +8,7 @@ from server.speech import (
     features_from_pcm,
     judge_session,
     measure_speech,
+    opening_for,
     render_api,
     transcribe_pcm,
 )
@@ -41,6 +42,7 @@ def start_session(path, user, level):
         "level": card,
         "mode": user["mode"],
         "avatar": user["avatar"],
+        "opening": opening_for(card["task"]),
     }, None
 
 
