@@ -54,6 +54,52 @@ function avatarSvg(avatar) {
     </svg>`;
 }
 
+function avatarOf(source) {
+  const from = source || {};
+  return {
+    skin: from.skin || "medium",
+    hair: from.hair || "tied",
+    outfit: from.outfit || "navy",
+    gender: from.gender || (user && user.gender) || draft.gender || "female",
+  };
+}
+
+function showLobby(source) {
+  document.body.classList.remove("in-room");
+  document.body.classList.add("has-lobby");
+  const avatar = avatarOf(source);
+  const key = JSON.stringify(avatar);
+  let layer = document.querySelector("#lobby");
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "lobby";
+    document.body.prepend(layer);
+  }
+  if (layer.dataset.key === key && layer.dataset.on === "1") return;
+  const canvas = document.createElement("canvas");
+  layer.replaceChildren(canvas);
+  layer.dataset.key = key;
+  layer.dataset.on = "1";
+  SpeakingRoom.lobby(canvas, avatar);
+}
+
+function hideLobby() {
+  const layer = document.querySelector("#lobby");
+  if (layer) {
+    layer.dataset.on = "0";
+    layer.dataset.key = "";
+    layer.replaceChildren();
+  }
+  document.body.classList.remove("has-lobby");
+  if (window.SpeakingRoom) SpeakingRoom.close();
+}
+
+function mount(html, options) {
+  const opts = options || {};
+  showLobby(opts.avatar);
+  app.innerHTML = `<section class="frame${opts.wide ? " wide" : ""}">${html}</section>`;
+}
+
 function choiceGroup(name, options, selected) {
   return `<div class="choices" data-group="${name}">
     ${options.map(([value, label]) => `
@@ -77,9 +123,11 @@ function bindChoices(root, onChange) {
 
 function showAccount() {
   logoutButton.hidden = true;
-  app.innerHTML = `
-    <section class="gate">
+  mount(`
     <section class="card">
+      <p class="eyebrow">المشهد أمامك</p>
+      <h2>قاعة التحدث</h2>
+      <p class="lede">الحساب يفتح هذه الغرفة. الجمهور الذي تراه هو الجمهور الذي ستقف أمامه.</p>
       <div class="tabs">
         <button class="choice selected" id="tab-login" type="button">دخول</button>
         <button class="choice" id="tab-register" type="button">حساب جديد</button>
@@ -94,8 +142,7 @@ function showAccount() {
         <p class="error" id="error"></p>
         <div class="row"><button class="primary" type="submit">متابعة</button></div>
       </form>
-    </section>
-    </section>`;
+    </section>`);
   let mode = "login";
   const title = document.querySelector("#account-title");
   document.querySelector("#tab-login").onclick = () => {
@@ -136,7 +183,7 @@ function showSetup() {
   if (user.age_group) draft.age_group = user.age_group;
   if (user.avatar) Object.assign(draft, user.avatar);
   if (user.mode) draft.mode = user.mode;
-  app.innerHTML = `
+  mount(`
     <section class="card">
       <p class="steps"><span class="active">1 أنت</span><span>2 الشخصية</span><span>3 العرض</span></p>
       <h2>من الذي يتدرب؟</h2>
@@ -146,19 +193,19 @@ function showSetup() {
       ${choiceGroup("age_group", [["under_18", "أقل من 18"], ["18_plus", "18 فأكثر"]], draft.age_group)}
       <p class="error" id="error"></p>
       <div class="row"><button class="primary" id="next" type="button">متابعة</button></div>
-    </section>`;
+    </section>`, { avatar: draft });
   bindChoices(app, () => {});
   document.querySelector("#next").onclick = () => showAvatar();
 }
 
 function showAvatar() {
-  app.innerHTML = `
+  mount(`
     <section class="card setup">
       <div class="preview" id="preview"></div>
       <div>
         <p class="steps"><span>1 أنت</span><span class="active">2 الشخصية</span><span>3 العرض</span></p>
         <h2>اختر المتحدث</h2>
-        <p class="lede">هذه الشخصية ستقف في الغرفة.</p>
+        <p class="lede">هذه الشخصية تقف الآن على المسرح.</p>
         <label>البشرة</label>
         ${choiceGroup("skin", [["light", "فاتحة"], ["medium", "متوسطة"], ["deep", "داكنة"]], draft.skin)}
         <label>الشعر</label>
@@ -170,8 +217,11 @@ function showAvatar() {
           <button class="primary" id="next" type="button">متابعة</button>
         </div>
       </div>
-    </section>`;
-  const paint = () => { document.querySelector("#preview").innerHTML = avatarSvg(draft); };
+    </section>`, { avatar: draft });
+  const paint = () => {
+    document.querySelector("#preview").innerHTML = avatarSvg(draft);
+    showLobby(draft);
+  };
   paint();
   bindChoices(app, paint);
   document.querySelector("#back").onclick = () => showSetup();
@@ -179,7 +229,7 @@ function showAvatar() {
 }
 
 function showMode() {
-  app.innerHTML = `
+  mount(`
     <section class="card">
       <p class="steps"><span>1 أنت</span><span>2 الشخصية</span><span class="active">3 العرض</span></p>
       <h2>كيف تريد أن ترى الغرفة؟</h2>
@@ -190,7 +240,7 @@ function showMode() {
         <button class="secondary" id="back" type="button">رجوع</button>
         <button class="primary" id="save" type="button">احفظ وأظهر المستويات</button>
       </div>
-    </section>`;
+    </section>`, { avatar: draft });
   bindChoices(app, () => {});
   document.querySelector("#back").onclick = () => showAvatar();
   document.querySelector("#save").onclick = async () => {
@@ -226,8 +276,9 @@ async function showHome() {
     "Graduation-project discussion": "مناقشة مشروع التخرج",
     "Job interview": "مقابلة وظيفية",
   };
-  app.innerHTML = `
+  mount(`
     <section class="card home-card">
+      <p class="eyebrow">القاعة مفتوحة</p>
       <h2>${user.username}</h2>
       <p class="lede">${age} · ${mode}. اختر مستوى وابدأ التحدث بصوتك.</p>
       <div class="levels">
@@ -247,7 +298,7 @@ async function showHome() {
         `).join("")}
       </div>
       <div class="row"><button class="secondary" id="edit" type="button">تعديل الإعداد</button></div>
-    </section>`;
+    </section>`, { avatar: user.avatar, wide: true });
   document.querySelector("#edit").onclick = () => showSetup();
   document.querySelectorAll(".start-level").forEach((button) => {
     button.onclick = () => enterLevel(Number(button.dataset.level), tasks);
@@ -266,7 +317,7 @@ function pushWave(level) {
   const width = canvas.width = canvas.clientWidth * 2;
   const height = canvas.height = 72;
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#6eb6ff";
+  ctx.strokeStyle = "#e2b56a";
   ctx.lineWidth = 3;
   ctx.beginPath();
   wave.forEach((amp, index) => {
@@ -282,7 +333,7 @@ function pushWave(level) {
   }
   ctx.closePath();
   ctx.globalAlpha = 0.9;
-  ctx.fillStyle = "rgba(61, 139, 253, 0.35)";
+  ctx.fillStyle = "rgba(226, 181, 106, 0.35)";
   ctx.fill();
   ctx.globalAlpha = 1;
   ctx.stroke();
@@ -299,6 +350,7 @@ async function enterLevel(level, tasks) {
 }
 
 function showRoom(session) {
+  hideLobby();
   document.body.classList.add("in-room");
   logoutButton.hidden = true;
   const minutes = 4;
@@ -359,6 +411,7 @@ function showRoom(session) {
       </div>
     </section>`;
   const canvas = document.querySelector("#scene");
+  if (session.avatar) session.avatar.gender = user && user.gender;
   const members = SpeakingRoom.open(canvas, session);
   const list = document.querySelector("#audience");
   const count = document.querySelector("#audience-count");
@@ -415,10 +468,11 @@ function showResult(result, session) {
   const change = report && report.change !== null && report.change !== undefined
     ? (report.change >= 0 ? `تحسنت بمقدار ${report.change} نقطة` : `انخفضت بمقدار ${Math.abs(report.change)} نقطة`)
     : "لا توجد جلسة سابقة للمقارنة";
-  app.innerHTML = `
+  mount(`
     <section class="card">
+      <p class="eyebrow">نتيجة الوقوف على المسرح</p>
       <h2>نهاية المستوى ${result.level}</h2>
-      <p class="lede">${session.level.task_ar}</p>
+      ${result.turns ? `<p class="score">${result.confidence}٪</p><p class="lede">الثقة في «${session.level.task_ar}»</p>` : `<p class="lede">${session.level.task_ar}</p>`}
       <ul class="report-list">
         ${result.turns ? `<li>مستوى الثقة: ${result.confidence}٪</li>
         <li>وضوح الكلام: ${result.clarity || 0}٪</li>
@@ -430,7 +484,7 @@ function showResult(result, session) {
           <li>المستوى الذي يُعاد: ${report.next_level}</li>` : ""}
       </ul>
       <div class="row"><button class="primary" id="back-home" type="button">العودة للمستويات</button></div>
-    </section>`;
+    </section>`, { avatar: user && user.avatar, wide: true });
   document.querySelector("#back-home").onclick = () => showHome();
 }
 
