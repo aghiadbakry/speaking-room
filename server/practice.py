@@ -64,11 +64,11 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             "SELECT COUNT(*) AS n FROM turns WHERE session_id = ? AND scored = 1",
             (session_id,),
         ).fetchone()["n"]
-        recent = [
-            row["line"]
+        history = [
+            {"role": row["role"], "line": row["line"]}
             for row in conn.execute(
                 """
-                SELECT line FROM turns
+                SELECT role, line FROM turns
                 WHERE session_id = ? AND scored = 1 AND line IS NOT NULL
                 ORDER BY id DESC LIMIT 4
                 """,
@@ -76,6 +76,11 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             ).fetchall()
             if row["line"]
         ]
+        recent = [item["line"] for item in history]
+        opening = None
+        if asked == 0:
+            card = _level_card(user, session["level"])
+            opening = opening_for(card["task"]) if card else None
     if render_api():
         heard = transcribe_pcm(pcm, sample_rate)
         if isinstance(heard, dict) and heard.get("empty"):
@@ -101,6 +106,8 @@ def take_turn(path, user, session_id, pcm, sample_rate):
         asked,
         features.get("transcript", ""),
         recent,
+        history,
+        opening,
     )
     with connect(path) as conn:
         conn.execute(

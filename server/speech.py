@@ -440,7 +440,7 @@ FOLLOW_UP = {
 }
 
 
-def _audience_line(role, transcript, intent, recent, features, level=1):
+def _audience_line(role, transcript, intent, recent, features, level=1, waiting=None):
     """On Render, one new sentence about what was just said. Local stays on the fixed line."""
     if not render_api():
         return ""
@@ -456,12 +456,24 @@ def _audience_line(role, transcript, intent, recent, features, level=1):
         "supportive": "مستمع يشجع الفكرة التي قيلت ويطلب إكمالها.",
     }
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
+    if waiting:
+        return _ask_groq(
+            "أنت نفس العضو الذي سأل، وتكمل الحديث معه أنت وحدك.\n"
+            "سؤالك السابق: «%s»\n"
+            "جوابه الآن: «%s»\n"
+            "إذا بقي الشك أو الجواب ناقص، قل «لست مقتنعاً» أو اطلب التفصيل، واختم بسؤال واحد.\n"
+            "إذا الجواب يكفي، اقبله بجملة قصيرة بلا سؤال.\n"
+            "لا تسلم الدور لشخص آخر، ولا تكرر: %s"
+            % ((waiting.get("line") or "")[:300], heard[:700], previous),
+            first_line_only=True,
+        )
     if int(level) >= 2:
         return _ask_groq(
             "أنت أحد أعضاء اللجنة، وأنت من يسأل.\n"
             "جواب المتحدث: «%s»\n"
             "اسأل سؤالاً واحداً قصيراً عن هذا الجواب فقط.\n"
             "في مناقشة المشروع اسأل عن المشروع. في المقابلة اسأل عن الوظيفة والعمل.\n"
+            "يمكنك أن تبدي شكاً إذا لزم الأمر.\n"
             "لا تكرر: %s"
             % (heard[:700], previous),
             first_line_only=True,
@@ -479,25 +491,77 @@ def _audience_line(role, transcript, intent, recent, features, level=1):
     )
 
 
+def _is_question(line):
+    text = line or ""
+    return "؟" in text or "?" in text
+
+
+def _waiting_judge(level, history, opening, asked):
+    """The judge who asked last keeps the exchange, for up to three questions."""
+    if not render_api():
+        return None
+    if history:
+        last = history[0]
+        if not _is_question(last.get("line")):
+            return None
+        streak = 0
+        for item in history:
+            if item.get("role") != last.get("role") or not _is_question(item.get("line")):
+                break
+            streak += 1
+        if streak >= 3:
+            return None
+        return {"role": last.get("role"), "line": last.get("line"), "streak": streak}
+    if opening and int(asked) == 0:
+        return {
+            "role": resolve_role(opening["role"], level),
+            "line": opening["line"],
+            "streak": 1,
+        }
+    return None
+
+
+def _hand_off(result, level, history, waiting):
+    """A finished exchange moves to another seated listener."""
+    if waiting or not history or not render_api():
+        return
+    last = history[0].get("role")
+    present = present_roles(level)
+    if not last or last not in present or result["role"] != last:
+        return
+    result["role"] = present[(present.index(last) + 1) % len(present)]
+
+
 def _usable_line(text, recent):
     line = (text or "").strip()
     if not line or line in recent:
         return ""
-    if len(line) > 90 or "دقيقة" in line or "كلمة في" in line:
+    if len(line) > 140 or "دقيقة" in line or "كلمة في" in line:
         return ""
     return line
 
 
-def adapt_audience(features, level, asked, transcript="", recent=None):
+def adapt_audience(features, level, asked, transcript="", recent=None, history=None, opening=None):
     """Chapter 3 chooses the listener. Render then writes a line about the speech."""
     result = _adapt_rules(features, level, asked)
     recent = recent or []
+    history = history or []
+    waiting = _waiting_judge(level, history, opening, asked)
+    if waiting:
+        result["role"] = resolve_role(waiting["role"], level)
+    else:
+        _hand_off(result, level, history, waiting)
     spoken = _usable_line(
-        _audience_line(result["role"], transcript, result["line"], recent, features, level),
+        _audience_line(
+            result["role"], transcript, result["line"], recent, features, level, waiting
+        ),
         recent,
     )
     if spoken:
         result["line"] = spoken
+    elif waiting and render_api():
+        result["role"] = resolve_role(waiting["role"], level)
+        result["line"] = "لست مقتنعاً بعد. ما الدليل على ما قلته؟"
     elif int(level) >= 2 and render_api():
         bank = FOLLOW_UP[int(level)]
         choice = bank[int(asked) % len(bank)]

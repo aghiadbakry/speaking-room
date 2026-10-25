@@ -302,6 +302,119 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(action["line"], "ما الخطوة التالية في هذا العمل؟")
         self.assertEqual(action["role"], "curious")
 
+    def test_the_same_judge_follows_the_answer_to_their_question(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("ما الوظيفة التي تتقدم لها؟", prompt)
+            self.assertIn("لست مقتنعاً", prompt)
+            self.assertIn("محلل بيانات", prompt)
+            return "لست مقتنعاً. ما أقرب خبرة لديك؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                1,
+                "محلل بيانات",
+                ["ما الوظيفة التي تتقدم لها؟"],
+                [{"role": "skeptical", "line": "ما الوظيفة التي تتقدم لها؟"}],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "skeptical")
+        self.assertIn("خبرة", action["line"])
+
+    def test_the_opening_judge_hears_the_first_answer(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("ما موضوع مشروع التخرج؟", prompt)
+            return "ما الأداة التي استخدمتها؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                2,
+                0,
+                "نظام لإدارة المواعيد",
+                [],
+                None,
+                {"role": "curious", "line": "ما موضوع مشروع التخرج؟"},
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "curious")
+        self.assertIn("الأداة", action["line"])
+
+    def test_after_three_questions_another_judge_can_join(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+        history = [
+            {"role": "skeptical", "line": "وما الدليل الثالث؟"},
+            {"role": "skeptical", "line": "وما الدليل الثاني؟"},
+            {"role": "skeptical", "line": "ما الدليل؟"},
+        ]
+
+        def fake(prompt, first_line_only):
+            self.assertIn("أحد أعضاء اللجنة", prompt)
+            return "ما الخطوة التي بدأت بها؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                3,
+                "ذكرت ثلاثة أمثلة من العمل",
+                [item["line"] for item in history],
+                history,
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertNotEqual(action["role"], "skeptical")
+
+    def test_an_accepted_answer_opens_the_floor_to_the_next_judge(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            return "لماذا يناسبك هذا العمل تحديداً؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                3,
+                "عملت على تحليل البيانات لعامين",
+                ["واضح، هذا يكفي الآن."],
+                [{"role": "skeptical", "line": "واضح، هذا يكفي الآن."}],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "interrupter")
+
 
 if __name__ == "__main__":
     unittest.main()
