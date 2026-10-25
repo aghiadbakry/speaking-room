@@ -241,6 +241,45 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     });
   }
 
+  function restyleHair(model, style) {
+    model.traverse((obj) => {
+      if (!obj.isMesh || !obj.geometry || !obj.geometry.attributes.position) return;
+      const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+      if (!list.some((mat) => mat && /^Hair/.test(mat.name))) return;
+      const source = obj.geometry;
+      if (!source.boundingBox) source.computeBoundingBox();
+      const box = source.boundingBox;
+      const span = box.max.y - box.min.y;
+      if (span < 0.08) return;
+      const geo = source.clone();
+      const pos = geo.attributes.position;
+      const top = box.max.y;
+      for (let i = 0; i < pos.count; i += 1) {
+        let x = pos.getX(i);
+        let y = pos.getY(i);
+        let z = pos.getZ(i);
+        if (style === "short") {
+          y = top - (top - y) * 0.45;
+          z = 0.02 + (z - 0.02) * 0.35;
+          x *= 0.8;
+        } else if (style === "tied") {
+          x *= 0.28;
+          y = top - 0.01 + (y - top) * 0.15;
+          z = -0.06 + (z + 0.06) * 0.2;
+        } else if (style === "long") {
+          const hang = Math.max(0, 0.06 - z);
+          y -= hang * 3.4;
+          z -= 0.04 + hang * 0.9;
+          x *= 0.72;
+        }
+        pos.setXYZ(i, x, y, z);
+      }
+      pos.needsUpdate = true;
+      geo.computeVertexNormals();
+      obj.geometry = geo;
+    });
+  }
+
   function loadLibrary() {
     if (!libraryPromise) {
       const loader = new GLTFLoader();
@@ -273,6 +312,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       obj.material = copies.length === 1 ? copies[0] : copies;
     });
     if (options.outfit || options.hair) dressActor(model, options);
+    if (options.hair) restyleHair(model, options.hair);
     model.updateMatrixWorld(true);
     const box = new THREE.Box3();
     model.traverse((obj) => {

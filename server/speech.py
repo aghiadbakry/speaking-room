@@ -365,15 +365,15 @@ def transcribe_pcm(pcm, sample_rate):
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": "Bearer %s" % key},
             files={"file": ("speech.wav", wav, "audio/wav")},
-            data=[
-                ("model", model),
-                ("language", "ar"),
-                ("response_format", "verbose_json"),
-                ("temperature", "0"),
-                ("timestamp_granularities[]", "word"),
-                ("prompt", "خطاب، عرض تقديمي، مقابلة عمل."),
-            ],
-            timeout=12,
+            data={
+                "model": model,
+                "language": "ar",
+                "response_format": "verbose_json",
+                "temperature": "0",
+                "timestamp_granularities[]": "word",
+                "prompt": "خطاب، عرض تقديمي، مقابلة عمل.",
+            },
+            timeout=18,
         )
     except Exception:
         return None
@@ -424,25 +424,27 @@ def _audience_line(role, transcript, intent, recent, features):
     """On Render, one new sentence about what was just said. Local stays on the fixed line."""
     if not render_api():
         return ""
-    voices = {
-        "interested": "مهتم، وتريد متابعة نقطة قالها المتحدث",
-        "uninterested": "غير مهتم، وتريد خلاصة النقطة التي قالها",
-        "curious": "فضولي، وتريد تفصيلاً ورد في كلامه",
-        "skeptical": "مشكك، وتريد دليلاً على نقطة قالها",
-        "interrupter": "تقاطع بسؤال أصعب عن نقطة قالها",
-        "supportive": "داعم، وتشجع نقطة قالها ثم تطلب الإكمال",
-    }
     heard = (transcript or "").strip()
     if not heard:
         return ""
+    voices = {
+        "interested": "مستمع مهتم. إذا كانت الجملة واضحة، سمِّ الفكرة وقل إنها واضحة ثم اطلب النقطة التالية.",
+        "uninterested": "مستمع يريد خلاصة الفكرة التي قيلت، باسمها.",
+        "curious": "مستمع يسأل عن تفصيل من الجملة التي قيلت.",
+        "skeptical": "مستمع يسأل عن دليل على شيء قيل في الجملة نفسها.",
+        "interrupter": "مستمع يقاطع بسؤال عن الجملة التي قيلت.",
+        "supportive": "مستمع يشجع الفكرة التي قيلت ويطلب إكمالها.",
+    }
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
     return _ask_groq(
-        "أنت شخص واحد في الجمهور. شخصيتك: %s.\n"
-        "كلام المتحدث الآن: %s\n"
-        "غاية ردك: %s\n"
-        "لا تكرر أياً من هذه الجمل: %s\n"
-        "اكتب جملة عربية واحدة، أقصر من اثنتي عشرة كلمة، عن كلام المتحدث نفسه. لا تذكر أرقاماً ولا سرعة الكلام."
-        % (voices.get(role, role), heard[:700], intent, previous),
+        "أنت تستمع إلى المتحدث الآن.\n"
+        "قال حرفياً: «%s»\n"
+        "شخصيتك: %s\n"
+        "اكتب جملة عربية واحدة. اذكر شيئاً قاله ثم رد عليه.\n"
+        "إذا كانت فكرته واضحة، قل إنها واضحة واطلب الفكرة التالية.\n"
+        "ممنوع استخدام جملة عامة لا علاقة لها بكلامه.\n"
+        "لا تكرر: %s"
+        % (heard[:700], voices.get(role, role), previous),
         first_line_only=True,
     )
 
