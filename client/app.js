@@ -451,7 +451,7 @@ function showRoom(session) {
     const tip = document.querySelector("#tip");
     if (!entered && tip) tip.textContent = "النظارة غير متصلة. المشهد مستمر على الشاشة.";
   };
-  document.querySelector("#mic").onclick = () => toggleMic(session.session_id);
+  document.querySelector("#mic").onclick = () => toggleMic(session.session_id, session.level.level);
   document.querySelector("#captions").onclick = () => {
     document.querySelector("#transcript").classList.toggle("hidden");
   };
@@ -518,44 +518,60 @@ function stopMic() {
   if (button) button.classList.remove("live");
 }
 
-async function toggleMic(sessionId) {
+async function toggleMic(sessionId, level) {
   const button = document.querySelector("#mic");
+  const caption = document.querySelector("#caption");
   if (micState) {
     stopMic();
+    if (caption) caption.textContent = "المايك متوقف. اضغطه لتتحدث من جديد.";
     return;
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const context = new AudioContext();
-  const source = context.createMediaStreamSource(stream);
-  const processor = context.createScriptProcessor(4096, 1, 1);
-  const silent = context.createGain();
-  silent.gain.value = 0;
-  const answerSeconds = session.level.level >= 2 ? 12 : 9;
-  const state = { listening: true, buffer: [], samples: 0, processor, source, stream, context, sending: false, gapUntil: 0, answerSeconds };
-  micState = state;
-  processor.onaudioprocess = (event) => {
-    if (!state.listening) return;
-    const channel = event.inputBuffer.getChannelData(0);
-    state.buffer.push(new Float32Array(channel));
-    state.samples += channel.length;
-    let energy = 0;
-    for (let index = 0; index < channel.length; index += 1) energy += channel[index] * channel[index];
-    pushWave(Math.sqrt(energy / channel.length));
-    if (state.sending || Date.now() < state.gapUntil) return;
-    if (state.samples > context.sampleRate * state.answerSeconds) {
-      const taken = state.buffer;
-      state.buffer = [];
-      state.samples = 0;
-      state.sending = true;
-      sendChunk(sessionId, taken, context.sampleRate).finally(() => {
-        state.sending = false;
-      });
-    }
-  };
-  source.connect(processor);
-  processor.connect(silent);
-  silent.connect(context.destination);
-  button.classList.add("live");
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioCtx();
+  const unlock = context.resume();
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    await unlock;
+    if (context.state !== "running") await context.resume();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const silent = context.createGain();
+    silent.gain.value = 0;
+    const answerSeconds = Number(level) >= 2 ? 12 : 9;
+    const state = { listening: true, buffer: [], samples: 0, processor, source, stream, context, sending: false, gapUntil: 0, answerSeconds };
+    micState = state;
+    processor.onaudioprocess = (event) => {
+      if (!state.listening) return;
+      const channel = event.inputBuffer.getChannelData(0);
+      state.buffer.push(new Float32Array(channel));
+      state.samples += channel.length;
+      let energy = 0;
+      for (let index = 0; index < channel.length; index += 1) energy += channel[index] * channel[index];
+      pushWave(Math.sqrt(energy / channel.length));
+      if (state.sending || Date.now() < state.gapUntil) return;
+      if (state.samples > context.sampleRate * state.answerSeconds) {
+        const taken = state.buffer;
+        state.buffer = [];
+        state.samples = 0;
+        state.sending = true;
+        sendChunk(sessionId, taken, context.sampleRate).finally(() => {
+          state.sending = false;
+        });
+      }
+    };
+    source.connect(processor);
+    processor.connect(silent);
+    silent.connect(context.destination);
+    button.classList.add("live");
+    if (caption) caption.textContent = "المايك يعمل. تحدّث الآن.";
+  } catch (err) {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    context.close();
+    micState = null;
+    if (button) button.classList.remove("live");
+    if (caption) caption.textContent = "تعذر تشغيل المايك. اسمح بالصوت ثم اضغط مرة أخرى.";
+  }
 }
 
 async function sendChunk(sessionId, parts, sampleRate) {
