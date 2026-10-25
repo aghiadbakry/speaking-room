@@ -98,6 +98,31 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(action["role"], "uninterested")
         self.assertEqual(action["line"], "ما الوقت الذي يوفره المشروع؟")
 
+    def test_a_missing_transcript_keeps_the_fixed_line(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fail(prompt, first_line_only):
+            raise AssertionError(prompt)
+
+        original = speech._ask_groq
+        speech._ask_groq = fail
+        try:
+            action = adapt_audience(
+                {"pace": 56, "pauses": 2, "repeated": 0, "clarity": 0.47},
+                1,
+                0,
+                "",
+                [],
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "skeptical")
+        self.assertEqual(action["line"], "وضّح هذه النقطة بمثال واحد.")
+
     def test_whisper_words_keep_a_real_pause(self):
         features = features_from_whisper_json(
             {

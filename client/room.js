@@ -25,10 +25,6 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     "female-casual.glb",
     "male-worker.glb",
   ];
-  const SPEAKER_FILES = {
-    female: { navy: "female-suit.glb", white: "female-formal.glb", black: "female-casual.glb", short: "female-suit.glb", tied: "female-formal.glb", long: "female-casual.glb" },
-    male: { navy: "male-suit.glb", white: "male-casual.glb", black: "male-suit.glb", short: "male-casual.glb", tied: "male-suit.glb", long: "male-casual.glb" },
-  };
 
   let renderer;
   let scene;
@@ -215,11 +211,34 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   }
 
   function speakerFile(avatar) {
-    const gender = avatar.gender === "male" ? "male" : "female";
-    const table = SPEAKER_FILES[gender];
-    if (avatar.hair === "long") return table.long;
-    if (avatar.hair === "short") return table.short;
-    return table[avatar.outfit] || table.navy;
+    const male = avatar.gender === "male";
+    if (male) {
+      if (avatar.hair === "tied") return "male-suit.glb";
+      return "male-casual.glb";
+    }
+    if (avatar.hair === "long") return "female-casual.glb";
+    if (avatar.hair === "tied") return "female-formal.glb";
+    return "female-suit.glb";
+  }
+
+  function dressActor(model, options) {
+    const outfitColor = { navy: 0x1f4e79, white: 0xe4e9f0, black: 0x2c333d }[options.outfit];
+    const hairColor = { short: 0x24180f, tied: 0x6b4423, long: 0xc6a36a }[options.hair];
+    const cloth = {
+      Black: 1, White: 1, Grey: 1, Orange: 1, LimeGreen: 1, Gold: 1, Red: 1,
+      Suit: 1, Tie: 1, LightBrown: 1, LightBlue: 1, Red_Dark: 1,
+    };
+    const hairNames = { Hair: 1, Hair_Brown: 1, Hair_Blond: 1 };
+    model.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const list = Array.isArray(obj.material) ? obj.material : [obj.material];
+      list.forEach((mat) => {
+        if (!mat) return;
+        if (mat.name === "Skin" && options.skin != null) mat.color.setHex(options.skin);
+        if (outfitColor != null && cloth[mat.name]) mat.color.setHex(outfitColor);
+        if (hairColor != null && hairNames[mat.name]) mat.color.setHex(hairColor);
+      });
+    });
   }
 
   function loadLibrary() {
@@ -253,6 +272,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       });
       obj.material = copies.length === 1 ? copies[0] : copies;
     });
+    if (options.outfit || options.hair) dressActor(model, options);
     model.updateMatrixWorld(true);
     const box = new THREE.Box3();
     model.traverse((obj) => {
@@ -350,6 +370,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       const avatar = Object.assign({ skin: "medium", hair: "tied", outfit: "navy", gender: "female" }, session.avatar || {});
       scene.add(makeActor(lib[speakerFile(avatar)], {
         skin: SKIN[avatar.skin] || SKIN.medium,
+        hair: avatar.hair || "tied",
+        outfit: avatar.outfit || "navy",
         x: 0,
         y: 0.24,
         z: 0.72,

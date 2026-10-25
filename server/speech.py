@@ -434,28 +434,37 @@ def _audience_line(role, transcript, intent, recent, features):
     }
     heard = (transcript or "").strip()
     if not heard:
-        heard = "لا يوجد نص. علّق على الإلقاء: السرعة %.0f كلمة في الدقيقة، والتوقفات %s." % (
-            features.get("pace", 0),
-            features.get("pauses", 0),
-        )
+        return ""
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
     return _ask_groq(
         "أنت شخص واحد في الجمهور. شخصيتك: %s.\n"
         "كلام المتحدث الآن: %s\n"
         "غاية ردك: %s\n"
         "لا تكرر أياً من هذه الجمل: %s\n"
-        "اكتب جملة عربية واحدة جديدة عن كلام المتحدث نفسه."
+        "اكتب جملة عربية واحدة، أقصر من اثنتي عشرة كلمة، عن كلام المتحدث نفسه. لا تذكر أرقاماً ولا سرعة الكلام."
         % (voices.get(role, role), heard[:700], intent, previous),
         first_line_only=True,
     )
+
+
+def _usable_line(text, recent):
+    line = (text or "").strip()
+    if not line or line in recent:
+        return ""
+    if len(line) > 90 or "دقيقة" in line or "كلمة في" in line:
+        return ""
+    return line
 
 
 def adapt_audience(features, level, asked, transcript="", recent=None):
     """Chapter 3 chooses the listener. Render then writes a line about the speech."""
     result = _adapt_rules(features, level, asked)
     recent = recent or []
-    spoken = _audience_line(result["role"], transcript, result["line"], recent, features)
-    if spoken and spoken not in recent:
+    spoken = _usable_line(
+        _audience_line(result["role"], transcript, result["line"], recent, features),
+        recent,
+    )
+    if spoken:
         result["line"] = spoken
     elif result["line"] in recent:
         choices = PERSONALITY.get(result["role"], [])
