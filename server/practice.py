@@ -6,7 +6,10 @@ from server.speech import (
     adapt_audience,
     choose_next_practice,
     features_from_pcm,
+    judge_session,
     measure_speech,
+    render_api,
+    transcribe_pcm,
 )
 
 
@@ -59,10 +62,19 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             "SELECT COUNT(*) AS n FROM turns WHERE session_id = ? AND scored = 1",
             (session_id,),
         ).fetchone()["n"]
-    features = features_from_pcm(pcm, sample_rate)
-    whisper = _try_whisper(pcm, sample_rate)
-    if whisper is not None:
-        features = whisper
+    if render_api():
+        heard = transcribe_pcm(pcm, sample_rate)
+        if isinstance(heard, dict) and heard.get("empty"):
+            features = None
+        elif heard is not None:
+            features = heard
+        else:
+            features = features_from_pcm(pcm, sample_rate)
+    else:
+        features = features_from_pcm(pcm, sample_rate)
+        whisper = _try_whisper(pcm, sample_rate)
+        if whisper is not None:
+            features = whisper
     if features is None:
         return {
             "empty": True,
@@ -80,7 +92,7 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             """,
             (
                 session_id,
-                "",
+                features.get("transcript", ""),
                 features["pace"],
                 features["pauses"],
                 features["repeated"],
@@ -130,7 +142,10 @@ def _try_whisper(pcm, sample_rate):
                     continue
                 words.append(text)
                 timings.append({"start": word.start, "end": word.end})
-        return measure_speech(" ".join(words), timings)
+        features = measure_speech(" ".join(words), timings)
+        if features is not None:
+            features["transcript"] = " ".join(words)
+        return features
     except Exception:
         return None
 
@@ -186,6 +201,17 @@ def finish_session(path, user, session_id):
             (session_id,),
         ).fetchall()
         scores = _skill_scores(rows)
+        feedback = None
+        if render_api():
+            joined = " ".join(
+                (row["transcript"] or "").strip()
+                for row in rows
+                if (row["transcript"] or "").strip()
+            )
+            judgement = judge_session(joined)
+            if judgement:
+                scores["organization"] = judgement["organization"]
+                feedback = judgement["feedback"]
         previous = conn.execute(
             """
             SELECT confidence FROM sessions
@@ -232,5 +258,6 @@ def finish_session(path, user, session_id):
         "pauses": round(scores["pauses"] * 100),
         "clarity": round(scores["clarity"] * 100),
         "organization": round(scores["organization"] * 100),
+        "feedback": feedback,
         "report": report,
     }, None

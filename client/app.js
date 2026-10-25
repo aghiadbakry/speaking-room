@@ -1,3 +1,13 @@
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
 const app = document.querySelector("#app");
 const logoutButton = document.querySelector("#logout");
 
@@ -479,6 +489,7 @@ function showResult(result, session) {
         <li>السرعة: ${result.pace || 0}٪ من النطاق المناسب</li>
         <li>التوقفات: ${result.pauses || 0}٪</li>
         <li>لقطات محسبة: ${result.turns}</li>` : `<li>لم يُلتقط كلام في هذه الجلسة، لذلك لا توجد نتيجة.</li>`}
+        ${result.feedback ? `<li>${escapeHtml(result.feedback)}</li>` : ""}
         ${report ? `<li>مقارنة بالجلسة السابقة: ${change}</li>
           <li>المهارة الأضعف: ${report.weak}</li>
           <li>المستوى الذي يُعاد: ${report.next_level}</li>` : ""}

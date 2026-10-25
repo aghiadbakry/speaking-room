@@ -1,15 +1,21 @@
 """The three contribution algorithms from Chapter 3.
 
-measureSpeech, adaptAudience, and chooseNextPractice. faster-whisper and
-Qwen2.5 are used when they are installed on this computer. Until then, the
-same rules run on the loudness and the pauses in the recording, and the
-questions come from the three fixed levels. Nothing is sent to a paid service.
+measureSpeech, adaptAudience, and chooseNextPractice. On the project computer
+these use faster-whisper (Whisper medium) and Ollama with Qwen2.5 7B. The
+published Render service is the only host that calls the stronger open models
+through Groq's API: Whisper large-v3 for the transcript and word timings, and
+Qwen3.8 27B for the harder question, the organization judgement, and the short
+feedback. That path runs only when Render sets RENDER=true and GROQ_API_KEY.
 """
 
 import array
+import io
 import json
 import math
+import os
+import re
 import urllib.request
+import wave
 
 FILLERS = {"uh", "um", "يعني", "اا", "اه", "ام"}
 
@@ -205,7 +211,125 @@ def estimate(features):
     return round(stress, 2), round(confidence, 2)
 
 
+def render_api():
+    """The API is the Render host only. The project computer stays on Chapter 3."""
+    on_render = os.environ.get("RENDER", "").strip().lower() == "true"
+    return on_render and bool(os.environ.get("GROQ_API_KEY", "").strip())
+
+
+def _wav_bytes(pcm, sample_rate):
+    usable = pcm[: len(pcm) - (len(pcm) % 2)]
+    if len(usable) < 2:
+        return None
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(int(sample_rate))
+        handle.writeframes(usable)
+    return buffer.getvalue()
+
+
+def features_from_whisper_json(payload, source):
+    """Turn a Whisper verbose_json payload into the Chapter 3 measures."""
+    if not isinstance(payload, dict):
+        return None
+    raw_words = list(payload.get("words") or [])
+    if not raw_words:
+        for segment in payload.get("segments") or []:
+            raw_words.extend(segment.get("words") or [])
+    words = []
+    timings = []
+    for item in raw_words:
+        text = (item.get("word") or "").strip()
+        if not text:
+            continue
+        words.append(text)
+        if "start" in item and "end" in item:
+            timings.append({"start": item["start"], "end": item["end"]})
+    transcript = " ".join(words).strip() or (payload.get("text") or "").strip()
+    complete = len(timings) == len(words) and len(timings) > 0
+    features = measure_speech(transcript, timings if complete else None)
+    if features is None:
+        return {"empty": True}
+    features["transcript"] = transcript
+    features["source"] = source
+    return features
+
+
+def _post_json(url, key, payload, timeout):
+    try:
+        import httpx
+    except Exception:
+        return None
+    try:
+        response = httpx.post(
+            url,
+            headers={
+                "Authorization": "Bearer %s" % key,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+    if response.status_code >= 400:
+        return None
+    try:
+        return response.json()
+    except Exception:
+        return None
+
+
+def _chat(key, model, prompt):
+    payload = _post_json(
+        "https://api.groq.com/openai/v1/chat/completions",
+        key,
+        {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "أجب بالعربية فقط. لا تكتب مقدمة ولا تفكيرًا ظاهرًا.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 180,
+            "temperature": 0.3,
+            "reasoning_effort": "none",
+        },
+        8,
+    )
+    if not payload:
+        return ""
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return (message.get("content") or "").strip()
+
+
+def _ask_groq(prompt, first_line_only):
+    if not render_api():
+        return ""
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    primary = os.environ.get("LANGUAGE_MODEL", "qwen/qwen3.8-27b")
+    fallback = os.environ.get("LANGUAGE_MODEL_FALLBACK", "openai/gpt-oss-120b")
+    text = _chat(key, primary, prompt)
+    if not text and fallback and fallback != primary:
+        text = _chat(key, fallback, prompt)
+    text = text.strip().strip('"').strip("«»")
+    if not text:
+        return ""
+    if first_line_only:
+        return text.split("\n")[0].strip()[:180]
+    return text[:800]
+
+
 def _qwen(prompt):
+    if os.environ.get("RENDER", "").strip().lower() == "true":
+        return _ask_groq(prompt, first_line_only=True)
     body = json.dumps(
         {"model": "qwen2.5:7b", "prompt": prompt, "stream": False}
     ).encode("utf-8")
@@ -221,6 +345,79 @@ def _qwen(prompt):
         return text.split("\n")[0][:180]
     except Exception:
         return ""
+
+
+def transcribe_pcm(pcm, sample_rate):
+    """Whisper large-v3 through Groq. None means this host is not using the API."""
+    if not render_api() or not pcm:
+        return None
+    wav = _wav_bytes(pcm, sample_rate)
+    if wav is None:
+        return None
+    model = os.environ.get("SPEECH_MODEL", "whisper-large-v3")
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    try:
+        import httpx
+    except Exception:
+        return None
+    try:
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": "Bearer %s" % key},
+            files={"file": ("speech.wav", wav, "audio/wav")},
+            data=[
+                ("model", model),
+                ("language", "ar"),
+                ("response_format", "verbose_json"),
+                ("temperature", "0"),
+                ("timestamp_granularities[]", "word"),
+                ("prompt", "خطاب، عرض تقديمي، مقابلة عمل."),
+            ],
+            timeout=12,
+        )
+    except Exception:
+        return None
+    if response.status_code >= 400:
+        return None
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    return features_from_whisper_json(payload, model)
+
+
+def _parse_judgement(text):
+    lines = [line.strip(" -*") for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    match = re.search(r"\b(0(?:\.\d+)?|1(?:\.0+)?)\b", lines[0])
+    if match is None and len(lines) > 1:
+        match = re.search(r"\b(0(?:\.\d+)?|1(?:\.0+)?)\b", lines[1])
+        sentence = lines[0]
+    else:
+        sentence = lines[1] if len(lines) > 1 else ""
+    if match is None:
+        return None
+    score = max(0.0, min(1.0, float(match.group(1))))
+    return {"organization": round(score, 2), "feedback": sentence[:180]}
+
+
+def judge_session(transcript):
+    """One language-model call at the end of a level, and only on Render."""
+    text = (transcript or "").strip()
+    if not text or not render_api():
+        return None
+    raw = _ask_groq(
+        "اقرأ نص متحدث يتدرب على الخطابة.\n"
+        "أجب بسطرين فقط.\n"
+        "السطر الأول رقم من 0 إلى 1 يقيس ترتيب الأفكار.\n"
+        "السطر الثاني نصيحة عربية واحدة قصيرة.\n"
+        "النص:\n%s" % text[:1800],
+        first_line_only=False,
+    )
+    if not raw:
+        return None
+    return _parse_judgement(raw)
 
 
 def adapt_audience(features, level, asked):

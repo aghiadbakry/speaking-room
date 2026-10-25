@@ -7,7 +7,15 @@ import unittest
 from fastapi.testclient import TestClient
 
 from server.main import create_app
-from server.speech import adapt_audience, choose_next_practice, measure_speech
+from server.speech import (
+    adapt_audience,
+    choose_next_practice,
+    features_from_whisper_json,
+    measure_speech,
+    render_api,
+    transcribe_pcm,
+)
+from server.speech import _parse_judgement
 
 
 def pcm_with_gap(sample_rate=16000):
@@ -62,6 +70,70 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(clarity["next_level"], 2)
         self.assertEqual(interruptions["next_level"], 3)
         self.assertEqual(pace["change"], 20)
+
+    def test_whisper_words_keep_a_real_pause(self):
+        features = features_from_whisper_json(
+            {
+                "text": "هذه فكرة واضحة",
+                "words": [
+                    {"word": "هذه", "start": 0.0, "end": 0.3},
+                    {"word": "فكرة", "start": 0.4, "end": 0.7},
+                    {"word": "واضحة", "start": 1.5, "end": 1.9},
+                ],
+            },
+            "whisper-large-v3",
+        )
+        self.assertEqual(features["words"], 3)
+        self.assertEqual(features["pauses"], 1)
+        self.assertEqual(features["source"], "whisper-large-v3")
+        self.assertIn("فكرة", features["transcript"])
+
+    def test_the_project_computer_does_not_call_the_api(self):
+        os.environ.pop("RENDER", None)
+        os.environ["GROQ_API_KEY"] = "test-key"
+        try:
+            self.assertFalse(render_api())
+            self.assertIsNone(transcribe_pcm(b"\x01\x00" * 8000, 16000))
+        finally:
+            os.environ.pop("GROQ_API_KEY", None)
+
+    def test_render_sends_the_chunk_to_whisper_large(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        calls = {}
+
+        class Response:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "text": "فكرة",
+                    "words": [{"word": "فكرة", "start": 0.0, "end": 0.4}],
+                }
+
+        def fake_post(url, **kwargs):
+            calls["url"] = url
+            calls["model"] = dict(kwargs["data"])["model"]
+            return Response()
+
+        import httpx
+
+        original = httpx.post
+        httpx.post = fake_post
+        try:
+            features = transcribe_pcm(b"\x01\x00" * 8000, 16000)
+        finally:
+            httpx.post = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(features["source"], "whisper-large-v3")
+        self.assertIn("audio/transcriptions", calls["url"])
+        self.assertEqual(calls["model"], "whisper-large-v3")
+
+    def test_judgement_reads_the_score_and_the_sentence(self):
+        parsed = _parse_judgement("0.4\nرتّب الفكرة ثم المثال.")
+        self.assertEqual(parsed["organization"], 0.4)
+        self.assertIn("رتّب", parsed["feedback"])
 
     def test_a_silent_turn_is_not_scored_and_a_loud_turn_is(self):
         tmp = tempfile.NamedTemporaryFile(suffix=".sqlite")
