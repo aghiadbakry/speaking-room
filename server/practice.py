@@ -77,12 +77,21 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             if row["line"]
         ]
         recent = [item["line"] for item in history]
+        prior = conn.execute(
+            """
+            SELECT transcript FROM turns
+            WHERE session_id = ? AND scored = 1 AND transcript IS NOT NULL AND transcript != ''
+            ORDER BY id DESC LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        context = prior["transcript"] if prior else ""
         opening = None
         if asked == 0:
             card = _level_card(user, session["level"])
             opening = opening_for(card["task"]) if card else None
     if render_api():
-        heard = transcribe_pcm(pcm, sample_rate)
+        heard = transcribe_pcm(pcm, sample_rate, context)
         if isinstance(heard, dict) and heard.get("empty"):
             features = None
         elif heard is not None:

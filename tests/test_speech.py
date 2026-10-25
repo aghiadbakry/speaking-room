@@ -166,6 +166,7 @@ class SpeechRules(unittest.TestCase):
         def fake_post(url, **kwargs):
             calls["url"] = url
             calls["model"] = dict(kwargs["data"])["model"]
+            calls["prompt"] = dict(kwargs["data"]).get("prompt")
             return Response()
 
         import httpx
@@ -173,7 +174,7 @@ class SpeechRules(unittest.TestCase):
         original = httpx.post
         httpx.post = fake_post
         try:
-            features = transcribe_pcm(b"\x01\x00" * 8000, 16000)
+            features = transcribe_pcm(pcm_with_gap(), 16000)
         finally:
             httpx.post = original
             os.environ.pop("RENDER", None)
@@ -181,6 +182,7 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(features["source"], "whisper-large-v3")
         self.assertIn("audio/transcriptions", calls["url"])
         self.assertEqual(calls["model"], "whisper-large-v3")
+        self.assertIsNone(calls["prompt"])
 
     def test_judgement_reads_the_score_and_the_sentence(self):
         parsed = _parse_judgement("0.4\nرتّب الفكرة ثم المثال.")
@@ -248,7 +250,8 @@ class SpeechRules(unittest.TestCase):
         interview = opening_for("Job interview")
         self.assertEqual(discussion["line"], "ما موضوع مشروع التخرج؟")
         self.assertEqual(interview["line"], "ما الوظيفة التي تتقدم لها؟")
-        self.assertIsNone(opening_for("A short presentation"))
+        self.assertEqual(opening_for("A short presentation")["line"], "ما موضوع عرضك؟")
+        self.assertIsNone(opening_for("Unknown task"))
 
     def test_level_three_asks_about_the_answer_and_waits(self):
         os.environ["RENDER"] = "true"
@@ -414,6 +417,61 @@ class SpeechRules(unittest.TestCase):
             os.environ.pop("RENDER", None)
             os.environ.pop("GROQ_API_KEY", None)
         self.assertEqual(action["role"], "interrupter")
+
+    def test_silence_is_not_sent_to_the_transcript(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+
+        def fail(url, **kwargs):
+            raise AssertionError(url)
+
+        import httpx
+
+        original = httpx.post
+        httpx.post = fail
+        try:
+            features = transcribe_pcm(b"\x00\x00" * 16000, 16000)
+        finally:
+            httpx.post = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertTrue(features["empty"])
+
+    def test_a_stock_phrase_on_silence_is_not_given_to_the_judges(self):
+        features = features_from_whisper_json(
+            {
+                "text": "موضوع العرض هو الطاقة ترجمة نانا",
+                "segments": [
+                    {
+                        "text": "موضوع العرض هو الطاقة",
+                        "start": 0.0,
+                        "end": 1.6,
+                        "no_speech_prob": 0.04,
+                        "avg_logprob": -0.3,
+                        "words": [
+                            {"word": "موضوع", "start": 0.0, "end": 0.3},
+                            {"word": "العرض", "start": 0.3, "end": 0.7},
+                            {"word": "هو", "start": 0.7, "end": 0.9},
+                            {"word": "الطاقة", "start": 0.9, "end": 1.5},
+                        ],
+                    },
+                    {
+                        "text": "ترجمة نانا",
+                        "start": 1.7,
+                        "end": 2.4,
+                        "no_speech_prob": 0.86,
+                        "avg_logprob": -1.4,
+                        "words": [
+                            {"word": "ترجمة", "start": 1.7, "end": 2.0},
+                            {"word": "نانا", "start": 2.0, "end": 2.4},
+                        ],
+                    },
+                ],
+            },
+            "whisper-large-v3",
+        )
+        self.assertIn("الطاقة", features["transcript"])
+        self.assertNotIn("نانا", features["transcript"])
 
 
 if __name__ == "__main__":

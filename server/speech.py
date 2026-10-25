@@ -230,14 +230,75 @@ def _wav_bytes(pcm, sample_rate):
     return buffer.getvalue()
 
 
+def _folded(text):
+    folded = (text or "").strip()
+    for src, dst in (("أ", "ا"), ("إ", "ا"), ("آ", "ا"), ("ة", "ه"), ("ى", "ي")):
+        folded = folded.replace(src, dst)
+    return re.sub(r"[\s\.،,!\-]+", " ", folded).strip()
+
+
+def _hallucinated(text):
+    """Whisper writes these on silence. They are not the speaker."""
+    folded = _folded(text)
+    if not folded:
+        return True
+    stock = (
+        "ترجمه نانا",
+        "ترجمه نانسي",
+        "نانسي قنقر",
+        "شكرا للمشاهده",
+        "شكرا لكم على المشاهده",
+        "اشتركوا في القناه",
+        "اشترك في القناه",
+        "لا تنسوا الاشتراك",
+        "لا تنسى الاشتراك",
+        "الترجمه بواسطة",
+    )
+    return any(phrase in folded for phrase in stock)
+
+
+def _segment_kept(segment):
+    if not isinstance(segment, dict):
+        return False
+    if _hallucinated(segment.get("text") or ""):
+        return False
+    if float(segment.get("no_speech_prob") or 0) >= 0.55:
+        return False
+    if segment.get("avg_logprob") is not None and float(segment["avg_logprob"]) <= -1.05:
+        return False
+    if float(segment.get("compression_ratio") or 0) >= 2.4:
+        return False
+    return True
+
+
+def _word_in_segment(word, segment):
+    if "start" not in word or "end" not in word:
+        return True
+    if "start" not in segment or "end" not in segment:
+        return True
+    middle = (float(word["start"]) + float(word["end"])) / 2.0
+    return float(segment["start"]) - 0.05 <= middle <= float(segment["end"]) + 0.05
+
+
 def features_from_whisper_json(payload, source):
     """Turn a Whisper verbose_json payload into the Chapter 3 measures."""
     if not isinstance(payload, dict):
         return None
+    segments = [segment for segment in (payload.get("segments") or []) if isinstance(segment, dict)]
+    kept = [segment for segment in segments if _segment_kept(segment)]
     raw_words = list(payload.get("words") or [])
-    if not raw_words:
-        for segment in payload.get("segments") or []:
-            raw_words.extend(segment.get("words") or [])
+    if segments:
+        if not kept:
+            return {"empty": True}
+        scoped = []
+        for word in raw_words:
+            if any(_word_in_segment(word, segment) for segment in kept):
+                scoped.append(word)
+        raw_words = scoped or [
+            word for segment in kept for word in (segment.get("words") or [])
+        ]
+    elif not raw_words:
+        raw_words = []
     words = []
     timings = []
     for item in raw_words:
@@ -247,7 +308,13 @@ def features_from_whisper_json(payload, source):
         words.append(text)
         if "start" in item and "end" in item:
             timings.append({"start": item["start"], "end": item["end"]})
-    transcript = " ".join(words).strip() or (payload.get("text") or "").strip()
+    transcript = " ".join(words).strip() or " ".join(
+        (segment.get("text") or "").strip() for segment in kept
+    ).strip()
+    if not segments:
+        transcript = transcript or (payload.get("text") or "").strip()
+    if _hallucinated(transcript):
+        return {"empty": True}
     complete = len(timings) == len(words) and len(timings) > 0
     features = measure_speech(transcript, timings if complete else None)
     if features is None:
@@ -347,11 +414,41 @@ def _qwen(prompt):
         return ""
 
 
-def transcribe_pcm(pcm, sample_rate):
+def _spoken_pcm(pcm, sample_rate):
+    """Drop the quiet edges. Silence is where the transcript goes wrong."""
+    samples = array.array("h")
+    usable = pcm[: len(pcm) - (len(pcm) % 2)]
+    if len(usable) < 2:
+        return None
+    samples.frombytes(usable)
+    frame = max(int(sample_rate * 0.03), 1)
+    flags = []
+    for start in range(0, len(samples) - frame, frame):
+        chunk = samples[start : start + frame]
+        energy = math.sqrt(sum(sample * sample for sample in chunk) / float(len(chunk)))
+        flags.append(energy > 700)
+    if sum(flags) < 4:
+        return None
+    first = next(index for index, spoken in enumerate(flags) if spoken)
+    last = len(flags) - 1 - next(index for index, spoken in enumerate(reversed(flags)) if spoken)
+    first = max(0, first - 2)
+    last = min(len(flags) - 1, last + 2)
+    start = first * frame
+    end = min(len(samples), (last + 1) * frame)
+    trimmed = samples[start:end]
+    if len(trimmed) < int(sample_rate * 0.4):
+        return None
+    return trimmed.tobytes()
+
+
+def transcribe_pcm(pcm, sample_rate, context=""):
     """Whisper large-v3 through Groq. None means this host is not using the API."""
     if not render_api() or not pcm:
         return None
-    wav = _wav_bytes(pcm, sample_rate)
+    spoken = _spoken_pcm(pcm, sample_rate)
+    if spoken is None:
+        return {"empty": True}
+    wav = _wav_bytes(spoken, sample_rate)
     if wav is None:
         return None
     model = os.environ.get("SPEECH_MODEL", "whisper-large-v3")
@@ -360,19 +457,22 @@ def transcribe_pcm(pcm, sample_rate):
         import httpx
     except Exception:
         return None
+    data = {
+        "model": model,
+        "language": "ar",
+        "response_format": "verbose_json",
+        "temperature": "0",
+        "timestamp_granularities[]": "word",
+    }
+    prior = (context or "").strip()
+    if prior and not _hallucinated(prior):
+        data["prompt"] = prior[-180:]
     try:
         response = httpx.post(
             "https://api.groq.com/openai/v1/audio/transcriptions",
             headers={"Authorization": "Bearer %s" % key},
             files={"file": ("speech.wav", wav, "audio/wav")},
-            data={
-                "model": model,
-                "language": "ar",
-                "response_format": "verbose_json",
-                "temperature": "0",
-                "timestamp_granularities[]": "word",
-                "prompt": "خطاب، عرض تقديمي، مقابلة عمل.",
-            },
+            data=data,
             timeout=18,
         )
     except Exception:
@@ -421,8 +521,10 @@ def judge_session(transcript):
 
 
 def opening_for(task):
-    """Level 2 and 3 begin with the committee, before the speaker answers."""
+    """Each task starts with one question, then the speaker answers."""
     table = {
+        "A short class talk": ("interested", "ما موضوع حديثك؟"),
+        "A short presentation": ("interested", "ما موضوع عرضك؟"),
         "Explain a school project": ("curious", "ما المشروع الذي ستشرحه؟"),
         "Graduation-project discussion": ("curious", "ما موضوع مشروع التخرج؟"),
         "Present to the class": ("interested", "ما موضوع عرضك أمام الفصل؟"),
@@ -456,6 +558,18 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         "supportive": "مستمع يشجع الفكرة التي قيلت ويطلب إكمالها.",
     }
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
+    if waiting and int(level) < 2:
+        return _ask_groq(
+            "أنت المستمع الذي سأل عن موضوع العرض.\n"
+            "سؤالك: «%s»\n"
+            "جوابه: «%s»\n"
+            "إذا فهمت الموضوع، سمِّه واطلب أن يبدأ العرض، بلا سؤال جديد.\n"
+            "إذا لم تفهم الموضوع، اسأل مرة واحدة: ما الموضوع؟\n"
+            "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
+            "لا تكرر: %s"
+            % ((waiting.get("line") or "")[:300], heard[:700], previous),
+            first_line_only=True,
+        )
     if waiting:
         return _ask_groq(
             "أنت نفس العضو الذي سأل، وتكمل الحديث معه أنت وحدك.\n"
@@ -463,6 +577,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "جوابه الآن: «%s»\n"
             "إذا بقي الشك أو الجواب ناقص، قل «لست مقتنعاً» أو اطلب التفصيل، واختم بسؤال واحد.\n"
             "إذا الجواب يكفي، اقبله بجملة قصيرة بلا سؤال.\n"
+            "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تسلم الدور لشخص آخر، ولا تكرر: %s"
             % ((waiting.get("line") or "")[:300], heard[:700], previous),
             first_line_only=True,
@@ -474,6 +589,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "اسأل سؤالاً واحداً قصيراً عن هذا الجواب فقط.\n"
             "في مناقشة المشروع اسأل عن المشروع. في المقابلة اسأل عن الوظيفة والعمل.\n"
             "يمكنك أن تبدي شكاً إذا لزم الأمر.\n"
+            "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تكرر: %s"
             % (heard[:700], previous),
             first_line_only=True,
@@ -484,6 +600,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         "شخصيتك: %s\n"
         "اكتب جملة عربية واحدة. اذكر شيئاً قاله ثم رد عليه.\n"
         "إذا كانت فكرته واضحة، قل إنها واضحة واطلب الفكرة التالية.\n"
+        "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
         "ممنوع استخدام جملة عامة لا علاقة لها بكلامه.\n"
         "لا تكرر: %s"
         % (heard[:700], voices.get(role, role), previous),

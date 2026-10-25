@@ -460,7 +460,11 @@ function showRoom(session) {
     const heard = document.querySelector("#heard");
     const tip = document.querySelector("#tip");
     if (heard) heard.textContent = session.opening.line;
-    if (tip) tip.textContent = "اللجنة تسأل أولاً. أجب، ثم انتظر السؤال التالي.";
+    if (tip) {
+      tip.textContent = session.level.level >= 2
+        ? "اللجنة تسأل أولاً. أجب، ثم انتظر السؤال التالي."
+        : "اذكر موضوعك، ثم ابدأ العرض.";
+    }
     setTimeout(() => SpeakingRoom.react(session.opening.role, session.opening.line), 700);
   }
 
