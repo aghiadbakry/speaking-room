@@ -660,13 +660,18 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const dx = data.lookAt.x - from.x;
     const dz = data.lookAt.z - from.z;
     if (dx * dx + dz * dz < 0.04) return;
-    const target = Math.atan2(dx, dz);
+    const facing = Math.PI;
+    let offset = Math.atan2(dx, dz) - facing;
+    while (offset > Math.PI) offset -= Math.PI * 2;
+    while (offset < -Math.PI) offset += Math.PI * 2;
+    const target = facing + Math.max(-1.15, Math.min(1.15, offset * 1.45));
     if (data.yaw == null) data.yaw = speaker.rotation.y;
     let turn = target - data.yaw;
     while (turn > Math.PI) turn -= Math.PI * 2;
     while (turn < -Math.PI) turn += Math.PI * 2;
     data.yaw += turn * amount;
     speaker.rotation.y = data.yaw;
+    if (renderer) renderer.domElement.dataset.pose = data.yaw.toFixed(2);
   }
 
   function stepSpeaker(time, delta) {
