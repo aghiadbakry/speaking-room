@@ -322,8 +322,6 @@ let micState = null;
 let voicePlayer = null;
 let voiceJob = 0;
 let voiceQuiet = false;
-let murmurPlayer = null;
-let murmurJob = 0;
 const VOICE_NAMES = {
   interested: "نورة",
   uninterested: "سلطان",
@@ -486,10 +484,6 @@ function showRoom(session) {
     };
   });
   canvas.addEventListener("audience", (event) => showBeat(event.detail));
-  canvas.addEventListener("murmur", (event) => {
-    const detail = event.detail || {};
-    setTimeout(() => speakMurmur(detail.line), 700);
-  });
 
   let remaining = minutes * 60;
   const total = remaining;
@@ -579,9 +573,7 @@ function unlockVoice() {
 
 function stopVoice() {
   voiceJob += 1;
-  murmurJob += 1;
   if (voicePlayer) voicePlayer.pause();
-  if (murmurPlayer) murmurPlayer.pause();
   if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("", false);
 }
 
@@ -612,37 +604,6 @@ async function speakLine(role, line) {
     if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk(role, true);
   } catch (err) {
     // The written line stays when the voice is quiet.
-  }
-}
-
-async function speakMurmur(line) {
-  const text = (line || "").trim();
-  if (!text || !token || voiceQuiet) return;
-  const job = ++murmurJob;
-  if (!murmurPlayer) murmurPlayer = new Audio();
-  murmurPlayer.volume = 0.4;
-  try {
-    const response = await fetch("/api/say", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ line: text.slice(0, 200), role: "crowd" }),
-    });
-    if (job !== murmurJob || !response.ok) return;
-    const blob = await response.blob();
-    if (job !== murmurJob || !blob.size) return;
-    const url = URL.createObjectURL(blob);
-    murmurPlayer.onended = () => {
-      URL.revokeObjectURL(url);
-      if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("crowd", false);
-    };
-    murmurPlayer.src = url;
-    await murmurPlayer.play();
-    if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("crowd", true);
-  } catch (err) {
-    // The judge's line stays the main voice.
   }
 }
 

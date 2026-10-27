@@ -873,11 +873,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       else kind = "clap";
       beginReaction(member, kind, 1.35);
     });
-    if (crowd && renderer && !hushed) {
-      playRoomSound(asking ? "murmur" : "clap", 0);
-      const line = asking ? "خلّنا نسمع." : "تمام، كمّلوا.";
-      renderer.domElement.dispatchEvent(new CustomEvent("murmur", { detail: { role: "crowd", line: line } }));
-    }
+    if (crowd && !hushed) playRoomSound(asking ? "murmur" : "clap", 0);
   }
 
   function addressPerson(index) {
