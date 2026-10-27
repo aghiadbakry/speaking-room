@@ -325,7 +325,8 @@ async function showHome() {
 }
 
 let micState = null;
-let voicePlayer = null;
+let voiceCtx = null;
+let voiceSource = null;
 let voiceJob = 0;
 let voiceQuiet = false;
 const VOICE_NAMES = {
@@ -576,42 +577,64 @@ function showRoom(session) {
 }
 
 function unlockVoice() {
-  if (!voicePlayer) voicePlayer = new Audio();
-  voicePlayer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-  const pending = voicePlayer.play();
-  if (pending) pending.catch(() => {});
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return;
+  if (!voiceCtx) voiceCtx = new Ctx();
+  const pending = voiceCtx.resume();
+  if (pending && pending.catch) pending.catch(() => {});
+  const buffer = voiceCtx.createBuffer(1, 1, 22050);
+  const source = voiceCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(voiceCtx.destination);
+  source.start(0);
 }
 
 function stopVoice() {
   voiceJob += 1;
-  if (voicePlayer) voicePlayer.pause();
+  if (voiceSource) {
+    try { voiceSource.stop(); } catch (err) { /* already finished */ }
+    voiceSource = null;
+  }
   if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("", false);
+}
+
+async function fetchSpeech(text, role) {
+  const response = await fetch("/api/say", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ line: text.slice(0, 200), role: role || "" }),
+  });
+  if (response.status === 200) return response.arrayBuffer();
+  return null;
 }
 
 async function speakLine(role, line) {
   const text = (line || "").trim();
   if (!text || !token || voiceQuiet) return;
   const job = ++voiceJob;
-  if (!voicePlayer) voicePlayer = new Audio();
+  if (!voiceCtx) unlockVoice();
   try {
-    const response = await fetch("/api/say", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ line: text.slice(0, 200), role: role || "" }),
-    });
-    if (job !== voiceJob || !response.ok) return;
-    const blob = await response.blob();
-    if (job !== voiceJob || !blob.size) return;
-    const url = URL.createObjectURL(blob);
-    voicePlayer.onended = () => {
-      URL.revokeObjectURL(url);
-      if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk(role, false);
+    const bytes = await fetchSpeech(text, role);
+    if (job !== voiceJob || !bytes || !bytes.byteLength) return;
+    if (voiceCtx.state === "suspended") await voiceCtx.resume();
+    const audio = await voiceCtx.decodeAudioData(bytes.slice(0));
+    if (job !== voiceJob) return;
+    const source = voiceCtx.createBufferSource();
+    source.buffer = audio;
+    source.connect(voiceCtx.destination);
+    source.onended = () => {
+      if (voiceSource === source && window.SpeakingRoom && SpeakingRoom.talk) {
+        SpeakingRoom.talk(role, false);
+      }
     };
-    voicePlayer.src = url;
-    await voicePlayer.play();
+    if (voiceSource) {
+      try { voiceSource.stop(); } catch (err) { /* already finished */ }
+    }
+    voiceSource = source;
+    source.start(0);
     if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk(role, true);
   } catch (err) {
     // The written line stays when the voice is quiet.

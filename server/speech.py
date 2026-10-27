@@ -14,6 +14,7 @@ import json
 import math
 import os
 import re
+import time
 import urllib.request
 import wave
 
@@ -413,17 +414,46 @@ def _ask_groq(prompt, first_line_only):
     return text[:800]
 
 
-def speak_line(text, role):
-    """Saudi speech for one judge line. Local Chapter 3 stays silent."""
-    speak_line.last_status = 0
-    speak_line.last_reason = ""
-    if not render_api():
+_SPEECH_CACHE = {}
+_SPEECH_BLOCKED_UNTIL = 0.0
+
+
+def clear_speech_cache():
+    """Tests reset the remembered lines between cases."""
+    global _SPEECH_BLOCKED_UNTIL
+    _SPEECH_CACHE.clear()
+    _SPEECH_BLOCKED_UNTIL = 0.0
+
+
+def _speech_wait(response):
+    """Seconds until another speech request is allowed. None when the reply does not say."""
+    headers = getattr(response, "headers", {}) or {}
+    retry = headers.get("retry-after") if hasattr(headers, "get") else None
+    try:
+        if retry not in (None, ""):
+            return max(0.0, float(retry))
+    except (TypeError, ValueError):
+        pass
+    try:
+        err = (response.json() or {}).get("error") or {}
+    except Exception:
         return None
-    line = (text or "").strip()
-    if not line:
+    message = str(err.get("message") or "")
+    match = re.search(r"try again in\s+([0-9.]+)\s*(ms|s|m|h)", message, re.I)
+    if match is None:
         return None
-    key = os.environ.get("GROQ_API_KEY", "").strip()
-    voice = VOICES.get(role or "", "abdullah")
+    value = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "ms":
+        return value / 1000.0
+    if unit == "m":
+        return value * 60.0
+    if unit == "h":
+        return value * 3600.0
+    return value
+
+
+def _post_speech(key, voice, line):
     try:
         import httpx
 
@@ -432,7 +462,7 @@ def speak_line(text, role):
             headers={"Authorization": "Bearer %s" % key},
             json={
                 "model": "canopylabs/orpheus-arabic-saudi",
-                "input": line[:200],
+                "input": line,
                 "voice": voice,
                 "response_format": "wav",
             },
@@ -440,17 +470,66 @@ def speak_line(text, role):
         )
     except Exception:
         speak_line.last_status = 0
+        speak_line.last_reason = ""
+        speak_line.last_wait = ""
         return None
     speak_line.last_status = response.status_code
     speak_line.last_reason = ""
-    if response.status_code != 200 or not response.content:
-        try:
-            err = (response.json() or {}).get("error") or {}
-            speak_line.last_reason = str(err.get("code") or err.get("type") or "")[:40]
-        except Exception:
-            speak_line.last_reason = ""
+    speak_line.last_wait = ""
+    if response.status_code == 200 and response.content:
+        return response.content
+    try:
+        err = (response.json() or {}).get("error") or {}
+        speak_line.last_reason = str(err.get("code") or err.get("type") or "")[:40]
+    except Exception:
+        speak_line.last_reason = ""
+    wait = _speech_wait(response)
+    if wait is not None:
+        speak_line.last_wait = str(int(round(wait)))
+    return None
+
+
+def speak_line(text, role):
+    """Saudi speech for one judge line. Local Chapter 3 stays silent."""
+    global _SPEECH_BLOCKED_UNTIL
+    speak_line.last_status = 0
+    speak_line.last_reason = ""
+    speak_line.last_wait = ""
+    if not render_api():
         return None
-    return response.content
+    line = (text or "").strip()[:200]
+    if not line:
+        return None
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    voice = VOICES.get(role or "", "abdullah")
+    remembered = _SPEECH_CACHE.get((voice, line))
+    if remembered:
+        speak_line.last_status = 200
+        speak_line.last_reason = "cached"
+        return remembered
+    if time.time() < _SPEECH_BLOCKED_UNTIL:
+        speak_line.last_status = 429
+        speak_line.last_reason = "rate_limit_exceeded"
+        speak_line.last_wait = str(max(1, int(_SPEECH_BLOCKED_UNTIL - time.time())))
+        return None
+    audio = _post_speech(key, voice, line)
+    if audio is None and speak_line.last_status == 429 and speak_line.last_wait != "":
+        try:
+            wait = float(speak_line.last_wait)
+        except ValueError:
+            wait = 3
+        if wait <= 2.5:
+            if wait > 0:
+                time.sleep(wait)
+            audio = _post_speech(key, voice, line)
+        else:
+            _SPEECH_BLOCKED_UNTIL = time.time() + wait
+    if not audio:
+        return None
+    if len(_SPEECH_CACHE) >= 48:
+        _SPEECH_CACHE.pop(next(iter(_SPEECH_CACHE)))
+    _SPEECH_CACHE[(voice, line)] = audio
+    return audio
 
 
 def _qwen(prompt):

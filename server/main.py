@@ -153,7 +153,11 @@ def create_app(db_path: str) -> FastAPI:
         audio = speak_line(body.line, body.role)
         status = str(getattr(speak_line, "last_status", 0))
         reason = str(getattr(speak_line, "last_reason", ""))
-        headers = {"X-Voice-Status": status, "X-Voice-Reason": reason}
+        headers = {
+            "X-Voice-Status": status,
+            "X-Voice-Reason": reason,
+            "X-Voice-Wait": str(getattr(speak_line, "last_wait", "") or ""),
+        }
         if not audio:
             return Response(status_code=204, headers=headers)
         return Response(content=audio, media_type="audio/wav", headers=headers)

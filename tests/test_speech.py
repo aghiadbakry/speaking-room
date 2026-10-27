@@ -217,7 +217,79 @@ class SpeechRules(unittest.TestCase):
         self.assertIn("audio/speech", calls["url"])
         self.assertEqual(calls["json"]["model"], "canopylabs/orpheus-arabic-saudi")
         self.assertEqual(calls["json"]["voice"], "abdullah")
-        self.assertEqual(calls["json"]["input"], "وش موضوع عرضك؟")
+
+    def test_a_repeated_judge_line_is_spoken_once(self):
+        from server.speech import clear_speech_cache, speak_line
+
+        clear_speech_cache()
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        posts = []
+
+        class Response:
+            status_code = 200
+            content = b"RIFF-once"
+            headers = {}
+
+            def json(self):
+                return {}
+
+        def fake_post(url, **kwargs):
+            posts.append(kwargs["json"]["input"])
+            return Response()
+
+        import httpx
+
+        original = httpx.post
+        httpx.post = fake_post
+        try:
+            first = speak_line("وش موضوع عرضك؟", "interested")
+            second = speak_line("وش موضوع عرضك؟", "interested")
+        finally:
+            httpx.post = original
+            clear_speech_cache()
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(first, b"RIFF-once")
+        self.assertEqual(second, b"RIFF-once")
+        self.assertEqual(posts, ["وش موضوع عرضك؟"])
+
+    def test_a_short_voice_limit_is_retried(self):
+        from server.speech import clear_speech_cache, speak_line
+
+        clear_speech_cache()
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        calls = {"n": 0}
+
+        class Response:
+            def __init__(self, status, content):
+                self.status_code = status
+                self.content = content
+                self.headers = {"retry-after": "0"}
+
+            def json(self):
+                return {"error": {"code": "rate_limit_exceeded", "message": "try again in 0s"}}
+
+        def fake_post(url, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return Response(429, b"")
+            return Response(200, b"RIFF-retry")
+
+        import httpx
+
+        original = httpx.post
+        httpx.post = fake_post
+        try:
+            audio = speak_line("كمّل.", "supportive")
+        finally:
+            httpx.post = original
+            clear_speech_cache()
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(audio, b"RIFF-retry")
+        self.assertEqual(calls["n"], 2)
 
     def test_judgement_reads_the_score_and_the_sentence(self):
         parsed = _parse_judgement("0.4\nرتّب الفكرة ثم المثال.")
