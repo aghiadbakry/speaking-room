@@ -151,9 +151,12 @@ def create_app(db_path: str) -> FastAPI:
     @app.post("/api/say")
     def say_line(body: SayIn, user: dict = Depends(current_user)):
         audio = speak_line(body.line, body.role)
+        status = str(getattr(speak_line, "last_status", 0))
+        reason = str(getattr(speak_line, "last_reason", ""))
+        headers = {"X-Voice-Status": status, "X-Voice-Reason": reason}
         if not audio:
-            return Response(status_code=204)
-        return Response(content=audio, media_type="audio/wav")
+            return Response(status_code=204, headers=headers)
+        return Response(content=audio, media_type="audio/wav", headers=headers)
 
     @app.post("/api/sessions/{session_id}/finish")
     def close_session(session_id: int, user: dict = Depends(current_user)):

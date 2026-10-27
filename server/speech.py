@@ -396,6 +396,8 @@ def _ask_groq(prompt, first_line_only):
 
 def speak_line(text, role):
     """Saudi speech for one judge line. Local Chapter 3 stays silent."""
+    speak_line.last_status = 0
+    speak_line.last_reason = ""
     if not render_api():
         return None
     line = (text or "").strip()
@@ -418,8 +420,16 @@ def speak_line(text, role):
             timeout=12,
         )
     except Exception:
+        speak_line.last_status = 0
         return None
+    speak_line.last_status = response.status_code
+    speak_line.last_reason = ""
     if response.status_code != 200 or not response.content:
+        try:
+            err = (response.json() or {}).get("error") or {}
+            speak_line.last_reason = str(err.get("code") or err.get("type") or "")[:40]
+        except Exception:
+            speak_line.last_reason = ""
         return None
     return response.content
 
