@@ -66,6 +66,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   const yawAxis = new THREE.Vector3(0, 1, 0);
   const pitchQuat = new THREE.Quaternion();
   const pitchAxis = new THREE.Vector3(1, 0, 0);
+  let stagePieces = [];
   let stageLight = null;
   let houseLight = null;
   let hemiLight = null;
@@ -442,10 +443,80 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     return group;
   }
 
-  function arrangement(level) {
+  function arrangement(session) {
+    const level = (session && session.level && session.level.level) || (typeof session === "number" ? session : 2);
+    const task = (session && session.level && session.level.task) || "";
+    const age = (session && session.age_group) || "";
+    const listeners = { z: -3.65, y: 0.42, xs: [-3.2, -1.6, 0, 1.6, 3.2], desk: 7.5, roles: false };
+    const floorListeners = { z: -3.35, y: 0, xs: [-2.4, -1.2, 0, 1.2, 2.4], desk: 6.2, roles: false };
+    if (task === "Job interview") {
+      return {
+        camera: "interview",
+        shell: "office",
+        walk: 0.8,
+        speaker: { x: 0, y: 0, z: 0.95 },
+        speaking: ["skeptical", "curious", "interrupter"],
+        rows: [
+          { z: -1.05, y: 0, xs: [-0.95, 0, 0.95], desk: 2.7, roles: true },
+        ],
+      };
+    }
+    if (task === "Graduation-project discussion") {
+      return {
+        camera: "discussion",
+        shell: "committee",
+        walk: 1.15,
+        speaker: { x: 0, y: 0, z: 1.35 },
+        speaking: ["interested", "uninterested", "curious", "skeptical", "interrupter", "supportive"],
+        rows: [
+          { z: -1.82, y: 0, xs: [-3.45, -2.1, -0.75, 0.75, 2.1, 3.45], desk: 8.1, roles: true, arc: 0.42 },
+        ],
+      };
+    }
+    if (task === "Present to the class") {
+      return {
+        camera: "presentation",
+        shell: "hall",
+        walk: 1.75,
+        speaker: { x: 0, y: 0.24, z: 0.72 },
+        speaking: ["supportive", "interested"],
+        rows: [
+          { z: -1.6, y: 0, xs: [-0.7, 0.7], desk: 2.4, roles: true },
+          listeners,
+        ],
+      };
+    }
+    if (task === "Explain a school project") {
+      return {
+        camera: "discussion",
+        shell: "committee",
+        walk: 1.15,
+        speaker: { x: 0, y: 0, z: 1.2 },
+        speaking: ["supportive"],
+        rows: [
+          { z: -1.55, y: 0, xs: [0], desk: 1.8, roles: true },
+          floorListeners,
+        ],
+      };
+    }
+    if (task === "A short class talk" || task === "A short presentation") {
+      const voice = age === "under_18" || task === "A short class talk" ? "supportive" : "interested";
+      return {
+        camera: "presentation",
+        shell: "hall",
+        walk: 1.75,
+        speaker: { x: 0, y: 0.24, z: 0.72 },
+        speaking: [voice],
+        rows: [
+          { z: -1.55, y: 0, xs: [0], desk: 1.8, roles: true },
+          listeners,
+        ],
+      };
+    }
     if (level === 1) {
       return {
         camera: "presentation",
+        shell: "hall",
         rows: [
           { z: -1.7, y: 0, xs: [-2.45, -0.82, 0.82, 2.45], desk: 6.1, roles: true },
           { z: -3.65, y: 0.42, xs: [-3.2, -1.6, 0, 1.6, 3.2], desk: 7.5, roles: false },
@@ -455,6 +526,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     if (level === 3) {
       return {
         camera: "interview",
+        shell: "hall",
         rows: [
           { z: -1.48, y: 0, xs: [-1.7, -0.55, 0.55, 1.7], desk: 4.6, roles: true },
           { z: -2.85, y: 0, xs: [-0.85, 0.85], desk: 2.8, roles: true },
@@ -463,6 +535,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     }
     return {
       camera: "discussion",
+      shell: "hall",
       rows: [
         { z: -1.82, y: 0, xs: [-3.45, -2.1, -0.75, 0.75, 2.1, 3.45], desk: 8.1, roles: true, arc: 0.42 },
       ],
@@ -503,7 +576,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
 
   function placePeople(session) {
     const gen = generation;
-    const plan = arrangement(session.level.level);
+    const plan = arrangement(session);
     people = [];
     const seats = [];
     let cursor = 0;
@@ -522,25 +595,30 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         const seat = chair(x, z);
         seat.position.y = row.y;
         scene.add(seat);
-        const role = row.roles ? ROLES[cursor] : null;
-        if (row.roles) cursor += 1;
+        let role = null;
+        if (row.roles) {
+          const id = plan.speaking ? plan.speaking[cursor] : ROLES[cursor].id;
+          role = ROLES.find((item) => item.id === id) || null;
+          cursor += 1;
+        }
         seats.push({ x: x, z: z, y: row.y, role: role });
       });
     });
     loadLibrary().then((lib) => {
       if (gen !== generation || !scene) return;
       const avatar = Object.assign({ skin: "medium", hair: "tied", outfit: "navy", gender: "female" }, session.avatar || {});
+      const home = plan.speaker || { x: 0, y: 0.24, z: 0.72 };
       scene.add(speaker = makeActor(lib[speakerFile(avatar)], {
         skin: SKIN[avatar.skin] || SKIN.medium,
         hair: avatar.hair || "tied",
         outfit: avatar.outfit || "navy",
-        x: 0,
-        y: 0.24,
-        z: 0.72,
+        x: home.x,
+        y: home.y,
+        z: home.z,
         rotY: Math.PI,
         seated: false,
       }));
-      if (presentation === "session") beginWalk(speaker);
+      if (presentation === "session") beginWalk(speaker, plan.walk);
       seats.forEach((seat, index) => {
         const role = seat.role;
         const actor = makeActor(lib[AUDIENCE_FILES[index % AUDIENCE_FILES.length]], {
@@ -578,7 +656,20 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     });
   }
 
-  function plannedAudience(level) {
+  function plannedAudience(session) {
+    const plan = arrangement(session);
+    if (plan.speaking) {
+      return plan.speaking.map((id, index) => {
+        const role = ROLES.find((item) => item.id === id);
+        return {
+          index: index,
+          id: role.id,
+          name: role.name,
+          color: "#" + role.color.toString(16).padStart(6, "0"),
+        };
+      });
+    }
+    const level = (session && session.level && session.level.level) || 2;
     const count = COUNTS[level] || 4;
     return ROLES.slice(0, count).map((role, index) => ({
       index: index,
@@ -788,9 +879,10 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     };
   }
 
-  function beginWalk(group) {
+  function beginWalk(group, distance) {
     const home = group.position.clone();
-    group.position.set(home.x, home.y, home.z + 1.75);
+    const extra = distance == null ? 1.75 : distance;
+    group.position.set(home.x, home.y, home.z + extra);
     group.userData.walk = {
       from: group.position.clone(),
       to: home,
@@ -879,6 +971,11 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   function addressPerson(index) {
     const member = people[index];
     if (!member || !member.userData.seated) return null;
+    if (member.userData.role === "crowd") {
+      beginReaction(member, "nod", 1.1);
+      if (renderer && scene && camera) renderer.render(scene, camera);
+      return null;
+    }
     const role = member.userData.role;
     const bank = ASIDES[role] || ASIDES.interested;
     const line = bank[(member.userData.asides || 0) % bank.length];
@@ -932,18 +1029,44 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     return top;
   }
 
+  function applyShell(plan) {
+    const bare = plan.shell === "office" || plan.shell === "committee";
+    stagePieces.forEach((mesh) => {
+      mesh.visible = !bare;
+    });
+    if (plan.shell !== "office") return;
+    scene.background = new THREE.Color(0x141b24);
+    scene.fog = new THREE.Fog(0x141b24, 5.5, 13);
+    const wall = new THREE.MeshStandardMaterial({ color: 0xd7dee6, roughness: 0.88 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x2c3a4a, roughness: 0.62 });
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0xb7d4e4,
+      roughness: 0.16,
+      emissive: 0x1d3a4a,
+      emissiveIntensity: 0.35,
+    });
+    addMesh(scene, new THREE.BoxGeometry(6.6, 3.05, 0.1), wall, 0, 1.52, -2.85);
+    addMesh(scene, new THREE.BoxGeometry(0.1, 3.05, 7.4), wall, -3.3, 1.52, 0.45);
+    addMesh(scene, new THREE.BoxGeometry(0.1, 3.05, 7.4), wall, 3.3, 1.52, 0.45);
+    addMesh(scene, new THREE.BoxGeometry(6.6, 0.07, 0.1), trim, 0, 2.95, -2.8);
+    addMesh(scene, new THREE.BoxGeometry(0.04, 0.85, 1.25), glass, 3.22, 1.65, 0.2);
+    if (board) board.position.set(0, 1.95, -2.72);
+  }
+
   function build(canvas, session) {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x100e0c);
     scene.fog = new THREE.Fog(0x100e0c, 11, 22);
     camera = new THREE.PerspectiveCamera(48, canvas.clientWidth / Math.max(canvas.clientHeight, 1), 0.1, 40);
+    const plan = arrangement(session);
+    stagePieces = [];
     if (presentation === "lobby") {
       camera.fov = 52;
       camera.position.set(0.2, 1.72, 4.2);
       camera.lookAt(0, 1.15, -1.2);
       intro = 1;
     } else {
-      applyCamera(arrangement(session.level.level).camera);
+      applyCamera(plan.camera);
       camera.position.copy(camFrom);
       camera.lookAt(lookFrom);
       intro = 0;
@@ -1044,8 +1167,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       const drape = addMesh(scene, new THREE.BoxGeometry(0.22, 3.35, 1.15), velvet, x, 2.15, 0.55);
       drape.rotation.y = x > 0 ? 0.12 : -0.12;
     });
-    addMesh(scene, new THREE.BoxGeometry(1.2, 0.02, 4.4), velvet, 0, 0.015, -2.55);
-    addMesh(scene, new THREE.BoxGeometry(3.4, 0.025, 1.55), velvet, 0, 0.235, 0.9);
+    const aisle = addMesh(scene, new THREE.BoxGeometry(1.2, 0.02, 4.4), velvet, 0, 0.015, -2.55);
+    const stageRug = addMesh(scene, new THREE.BoxGeometry(3.4, 0.025, 1.55), velvet, 0, 0.235, 0.9);
     const frame = new THREE.MeshStandardMaterial({ color: 0xcbb89a, roughness: 0.55, metalness: 0.08 });
     addMesh(scene, new THREE.BoxGeometry(0.08, 1.35, 0.08), frame, -0.98, 2.35, -6.4);
     addMesh(scene, new THREE.BoxGeometry(0.08, 1.35, 0.08), frame, 0.98, 2.35, -6.4);
@@ -1062,8 +1185,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
 
     const stage = addMesh(scene, new THREE.BoxGeometry(8.2, 0.22, 2.4), wood(0x8a5a3c), 0, 0.11, 0.85);
     stage.castShadow = false;
-    addMesh(scene, new THREE.BoxGeometry(1.15, 1.02, 0.52), wood(0x5a3a24), 0, 0.73, 0.15);
-    addMesh(scene, new THREE.BoxGeometry(0.42, 0.025, 0.28), cloth(0x222222), 0, 1.25, 0.05);
+    const podium = addMesh(scene, new THREE.BoxGeometry(1.15, 1.02, 0.52), wood(0x5a3a24), 0, 0.73, 0.15);
+    const mic = addMesh(scene, new THREE.BoxGeometry(0.42, 0.025, 0.28), cloth(0x222222), 0, 1.25, 0.05);
+    stagePieces = [stage, podium, mic, stageRug, aisle];
     const screen = addMesh(
       scene,
       new THREE.PlaneGeometry(1.7, 1.05),
@@ -1073,7 +1197,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     screen.castShadow = false;
     board = screen;
     if (pendingTopic) paintTopic(pendingTopic);
-    if (presentation === "session") paintLights(arrangement(session.level.level).camera);
+    if (presentation === "session") paintLights(plan.camera);
+    applyShell(plan);
 
     placePeople(session);
   }
@@ -1212,7 +1337,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         if (beat) canvas.dispatchEvent(new CustomEvent("audience", { detail: beat }));
       };
       canvas.addEventListener("pointerdown", onCanvasClick);
-      return plannedAudience(session.level.level);
+      return plannedAudience(session);
     },
     address: function (index) {
       const beat = addressPerson(index);

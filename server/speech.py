@@ -72,9 +72,28 @@ def present_roles(level):
     return found
 
 
-def resolve_role(role, level):
+# Who may speak. Listeners behind them are not in this list.
+TASK_SEATS = {
+    "A short class talk": ["supportive"],
+    "A short presentation": ["interested"],
+    "Explain a school project": ["supportive"],
+    "Present to the class": ["supportive", "interested"],
+    "Graduation-project discussion": list(SEAT_ORDER),
+    "Job interview": ["skeptical", "curious", "interrupter"],
+}
+
+
+def seated_roles(task):
+    """None keeps the Chapter 3 seat table. A task uses the room built for it."""
+    found = TASK_SEATS.get(task or "")
+    if not found:
+        return None
+    return list(found)
+
+
+def resolve_role(role, level, seats=None):
     """A level-1 room has no interrupter and no supportive seat."""
-    present = present_roles(level)
+    present = list(seats) if seats else present_roles(level)
     if role in present:
         return role
     fallback = {"supportive": "interested", "interrupter": "curious"}.get(role)
@@ -560,8 +579,17 @@ def judge_session(transcript):
     return _parse_judgement(raw)
 
 
-def opening_for(task):
+def opening_for(task, age=""):
     """Each task starts with one question, then the speaker answers."""
+    if age == "under_18":
+        young = {
+            "A short class talk": ("supportive", "خذ راحتك. وش تبي تقول لنا اليوم؟"),
+            "Explain a school project": ("supportive", "حلو. وش المشروع اللي بتشرحه؟"),
+            "Present to the class": ("supportive", "الفصل معك. وش موضوع عرضك؟"),
+        }
+        found = young.get(task)
+        if found:
+            return {"role": found[0], "line": found[1], "mood": mood_for(found[0], found[1])}
     table = {
         "A short class talk": ("interested", "وش موضوع حديثك؟"),
         "A short presentation": ("interested", "وش موضوع عرضك؟"),
@@ -592,6 +620,74 @@ VOICES = {
 }
 
 
+def _situation(age, task, level):
+    """How this reply should sound. Empty keeps the Chapter 3 wording."""
+    if age == "under_18":
+        return "encourage"
+    if age != "18_plus":
+        return ""
+    if task == "Job interview" or (int(level) >= 3 and task != "Graduation-project discussion"):
+        return "surprise"
+    if task == "Graduation-project discussion" or int(level) == 2:
+        return "defense"
+    return "simple"
+
+
+def _situation_prompt(situation, heard, previous, waiting):
+    heard_bit = "قال المتحدث: «%s»\n" % heard[:700]
+    wait_bit = ""
+    if waiting and waiting.get("line"):
+        wait_bit = "سؤالك السابق: «%s»\n" % (waiting.get("line") or "")[:300]
+    tail = (
+        "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
+        "لا تكرر: %s" % previous
+    )
+    if situation == "encourage":
+        return (
+            "المتحدّث أصغر من 18. هدفك أن تشجّعه وتحفّزه ليثق بإلقائه أمام الجمهور.\n"
+            + wait_bit
+            + heard_bit
+            + "اكتب جملة واحدة دافئة: امدح شيئاً قاله، ثم اطلب خطوة صغيرة بلطف.\n"
+            "لا تشكك في فكرته ولا تحرجّه.\n"
+            + tail
+        )
+    if situation == "simple":
+        return (
+            "هذا المستوى الأول. الرد بسيط وسهل.\n"
+            + wait_bit
+            + heard_bit
+            + "جملة قصيرة واحدة، أو سؤال سهل واحد عن كلامه. لا تشكك ولا تفاجئه.\n"
+            + tail
+        )
+    if situation == "defense":
+        return (
+            "هذه مناقشة مشروع تخرج. ابدأ بالتشكيك في العرض أو في فكرة المشروع.\n"
+            + wait_bit
+            + heard_bit
+            + "اطلب منه أن يدافع عن فكرته: ليش هالفكرة، أو وش الدليل.\n"
+            "سؤال واحد واضح، بلا تهكم.\n"
+            + tail
+        )
+    return (
+        "هذه مقابلة عمل، وهي أصعب مستوى. اكتب سؤالاً واحداً غير متوقع.\n"
+        + wait_bit
+        + heard_bit
+        + "لا تسأل السؤال الواضح عن المسمّى أو سنوات الخبرة. فاجئه بزاوية من كلامه.\n"
+        "سؤال واحد فقط.\n"
+        + tail
+    )
+
+
+def _follow_bank(level, age, task):
+    if age == "under_18":
+        return ["جميل، وضّحها بمثال بسيط.", "أحسنت، كمّل النقطة الجاية."]
+    if age == "18_plus" and (task == "Graduation-project discussion" or int(level) == 2):
+        return ["ليش اخترت هالفكرة بالذات؟", "وش الدليل إن الفكرة بتشتغل؟"]
+    if age == "18_plus" and (task == "Job interview" or int(level) >= 3):
+        return ["لو انقطع الشغل نص الدوام، وش بتسوي؟", "وش قرار أخذته وما كان متوقع؟"]
+    return FOLLOW_UP[int(level)]
+
+
 def _topic_clause(topic):
     """The subject named at the start stays on the board for the rest of the round."""
     text = (topic or "").strip().replace("%", "")
@@ -600,7 +696,7 @@ def _topic_clause(topic):
     return "الموضوع المثبت على اللوحة: «%s». ابقَ على هذا الموضوع.\n" % text[:80]
 
 
-def _audience_line(role, transcript, intent, recent, features, level=1, waiting=None, topic=""):
+def _audience_line(role, transcript, intent, recent, features, level=1, waiting=None, topic="", age="", task=""):
     """On Render, one new sentence about what was just said. Local stays on the fixed line."""
     if not render_api():
         return ""
@@ -614,6 +710,10 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "لا فصحى رسمية ولا لهجة بلد آخر.\n"
         )
         return _ask_groq(_topic_clause(topic) + dialect + prompt, first_line_only=True)
+    situation = _situation(age, task, level)
+    if situation:
+        previous = " | ".join(recent[:4]) if recent else "لا يوجد"
+        return ask(_situation_prompt(situation, heard, previous, waiting))
     voices = {
         "interested": "مستمع مهتم. إذا كانت الجملة واضحة، سمِّ الفكرة وقل إنها واضحة ثم اطلب النقطة التالية.",
         "uninterested": "مستمع يريد خلاصة الفكرة التي قيلت، باسمها.",
@@ -690,7 +790,7 @@ def _is_question(line):
     return "؟" in text or "?" in text
 
 
-def _waiting_judge(level, history, opening, asked):
+def _waiting_judge(level, history, opening, asked, seats=None):
     """The judge who asked last keeps the exchange, for up to three questions."""
     if not render_api():
         return None
@@ -708,19 +808,19 @@ def _waiting_judge(level, history, opening, asked):
         return {"role": last.get("role"), "line": last.get("line"), "streak": streak}
     if opening and int(asked) == 0:
         return {
-            "role": resolve_role(opening["role"], level),
+            "role": resolve_role(opening["role"], level, seats),
             "line": opening["line"],
             "streak": 1,
         }
     return None
 
 
-def _hand_off(result, level, history, waiting):
+def _hand_off(result, level, history, waiting, seats=None):
     """A finished exchange moves to another seated listener."""
     if waiting or not history or not render_api():
         return
     last = history[0].get("role")
-    present = present_roles(level)
+    present = list(seats) if seats else present_roles(level)
     if not last or last not in present or result["role"] != last:
         return
     result["role"] = present[(present.index(last) + 1) % len(present)]
@@ -735,33 +835,46 @@ def _usable_line(text, recent):
     return line
 
 
-def adapt_audience(features, level, asked, transcript="", recent=None, history=None, opening=None, topic=""):
+def adapt_audience(features, level, asked, transcript="", recent=None, history=None, opening=None, topic="", age="", task=""):
     """Chapter 3 chooses the listener. Render then writes a line about the speech."""
-    result = _adapt_rules(features, level, asked)
+    seats = seated_roles(task)
+    result = _adapt_rules(features, level, asked, seats)
     recent = recent or []
     history = history or []
-    waiting = _waiting_judge(level, history, opening, asked)
+    waiting = _waiting_judge(level, history, opening, asked, seats)
     if waiting:
-        result["role"] = resolve_role(waiting["role"], level)
+        result["role"] = resolve_role(waiting["role"], level, seats)
     else:
-        _hand_off(result, level, history, waiting)
+        _hand_off(result, level, history, waiting, seats)
     spoken = _usable_line(
         _audience_line(
-            result["role"], transcript, result["line"], recent, features, level, waiting, topic
+            result["role"], transcript, result["line"], recent, features, level, waiting, topic, age, task
         ),
         recent,
     )
     if spoken:
         result["line"] = spoken
     elif waiting and render_api():
-        result["role"] = resolve_role(waiting["role"], level)
-        result["line"] = "لسه عندي سؤال. وضّحها بمثال بسيط؟"
+        result["role"] = resolve_role(waiting["role"], level, seats)
+        result["line"] = (
+            "خذ راحتك. وضّحها بمثال بسيط؟"
+            if age == "under_18"
+            else "لسه عندي سؤال. وضّحها بمثال بسيط؟"
+        )
     elif int(level) >= 2 and render_api():
-        bank = FOLLOW_UP[int(level)]
+        bank = _follow_bank(level, age, task)
         choice = bank[int(asked) % len(bank)]
         if choice not in recent:
             result["line"] = choice
-            result["role"] = resolve_role("curious" if int(level) == 2 else "skeptical", level)
+            if age == "under_18":
+                preferred = "supportive"
+            elif _situation(age, task, level) == "surprise":
+                preferred = "interrupter"
+            elif _situation(age, task, level) == "defense":
+                preferred = "skeptical"
+            else:
+                preferred = "curious" if int(level) == 2 else "skeptical"
+            result["role"] = resolve_role(preferred, level, seats)
     elif result["line"] in recent:
         choices = PERSONALITY.get(result["role"], [])
         for choice in choices:
@@ -773,7 +886,7 @@ def adapt_audience(features, level, asked, transcript="", recent=None, history=N
     return result
 
 
-def _adapt_rules(features, level, asked):
+def _adapt_rules(features, level, asked, seats=None):
     """Chapter 3 adaptAudience. The caller already rejected an empty turn."""
     stress, confidence = estimate(features)
     level = max(1, min(3, int(level)))
@@ -782,7 +895,7 @@ def _adapt_rules(features, level, asked):
         return {
             "stress": stress,
             "confidence": confidence,
-            "role": resolve_role("supportive", level),
+            "role": resolve_role("supportive", level, seats),
             "line": "خذ ثانيتين. ما الفكرة الرئيسية؟",
             "extra_seconds": 2,
             "interruptions": "fewer",
@@ -791,7 +904,7 @@ def _adapt_rules(features, level, asked):
         return {
             "stress": stress,
             "confidence": confidence,
-            "role": resolve_role("skeptical", level),
+            "role": resolve_role("skeptical", level, seats),
             "line": "ممكن تعيد النقطة الأخيرة؟",
             "extra_seconds": 0,
             "interruptions": "normal",
@@ -800,7 +913,7 @@ def _adapt_rules(features, level, asked):
         return {
             "stress": stress,
             "confidence": confidence,
-            "role": resolve_role("curious", level),
+            "role": resolve_role("curious", level, seats),
             "line": "كمّل، ما الذي جاء بعد ذلك؟",
             "extra_seconds": 0,
             "interruptions": "normal",
@@ -809,7 +922,7 @@ def _adapt_rules(features, level, asked):
         return {
             "stress": stress,
             "confidence": confidence,
-            "role": resolve_role("skeptical", level),
+            "role": resolve_role("skeptical", level, seats),
             "line": "وضّح هذه النقطة بمثال واحد.",
             "extra_seconds": 0,
             "interruptions": "normal",
@@ -818,14 +931,14 @@ def _adapt_rules(features, level, asked):
         return {
             "stress": stress,
             "confidence": confidence,
-            "role": resolve_role("curious", level),
+            "role": resolve_role("curious", level, seats),
             "line": "انتقلت بين الأفكار. ما النقطة التي تريدها الآن؟",
             "extra_seconds": 0,
             "interruptions": "normal",
         }
     # A steady performance lets every seated listener respond in character.
     # The harder question still appears when the interrupter's turn comes.
-    present = present_roles(level)
+    present = list(seats) if seats else present_roles(level)
     role = present[int(asked) % len(present)]
     if role == "interrupter":
         if render_api():

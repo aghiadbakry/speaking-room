@@ -301,6 +301,12 @@ async function showHome() {
                 "A small calm group. No questions.": "مجموعة صغيرة وهادئة. بدون أسئلة.",
                 "More listeners, and up to two questions.": "مستمعون أكثر، وسؤالان على الأكثر.",
                 "Interruptions, and one harder question.": "مقاطعات، وسؤال أصعب.",
+                "One encouraging voice. The class only listens.": "صوت مشجّع، والصف يستمع فقط.",
+                "One person asks about the project. The others listen.": "شخص واحد يناقش المشروع، والباقي يستمع.",
+                "The class listens, and the replies stay encouraging.": "الفصل يستمع، والردود تبقى مشجّعة.",
+                "One simple voice, and listeners behind.": "رد بسيط، وجمهور مستمع خلف اللجنة.",
+                "The committee questions the idea. No extra audience.": "لجنة فقط، وتشكّك في فكرة المشروع.",
+                "A smaller interview room, and an unexpected question.": "غرفة مقابلة أصغر، وسؤال غير متوقع.",
               })[level.pressure] || level.pressure}</span>
             </div>
             <button class="primary start-level" data-level="${level.level}" type="button">ادخل المستوى</button>
@@ -378,12 +384,17 @@ function showRoom(session) {
   document.body.classList.add("in-room");
   logoutButton.hidden = true;
   const minutes = 4;
-  const aims = {
-    1: "هدف الجولة: خلّ الجمهور معك.",
-    2: "هدف الجولة: خلّ الفضولي يتابع مشروعك.",
-    3: "هدف الجولة: قرّب المشكك من فكرتك.",
-  };
-  const aim = aims[session.level.level] || "";
+  const task = session.level.task;
+  const young = session.age_group === "under_18";
+  let aim = "هدف الجولة: خلّ الجمهور معك.";
+  if (young) aim = "هدف الجولة: الجمهور يشجّعك. كمّل بهدوء.";
+  else if (task === "A short presentation") aim = "هدف الجولة: اشرح فكرتك بجمل بسيطة.";
+  else if (task === "Graduation-project discussion") aim = "هدف الجولة: دافع عن فكرة مشروعك.";
+  else if (task === "Job interview") aim = "هدف الجولة: جاوب على سؤال ما تتوقعه.";
+  const panelName = task === "Graduation-project discussion" || task === "Job interview" ? "اللجنة" : "من يرد";
+  const listenHint = task === "Graduation-project discussion" || task === "Job interview"
+    ? "اضغط اسماً، أو الشخص نفسه، ليدخل الحديث."
+    : "من في الخلف يستمع فقط. اضغط من يرد عليك.";
   app.innerHTML = `
     <section class="stage">
       <canvas id="scene"></canvas>
@@ -401,9 +412,9 @@ function showRoom(session) {
             <div class="metric"><span>وقت الجولة</span><b id="timer">${String(minutes).padStart(2, "0")}:00</b></div>
             <div class="meter time"><span id="time-bar"></span></div>
           </div>
-          <strong class="panel-title">الجمهور <span id="audience-count"></span></strong>
+          <strong class="panel-title">${panelName} <span id="audience-count"></span></strong>
           <div id="audience"></div>
-          <p class="aside-hint">اضغط اسماً، أو الشخص نفسه، ليدخل الحديث.</p>
+          <p class="aside-hint">${listenHint}</p>
         </aside>
         <aside class="panel side-right">
           <strong class="panel-title">جو الجولة</strong>

@@ -1,6 +1,6 @@
 """The three speaking situations from Table 3.3.
 
-Age changes the task card. The room stays the same.
+Age changes the task card. The hall then follows that task.
 """
 
 LEVELS = {
@@ -9,19 +9,19 @@ LEVELS = {
             "level": 1,
             "room": "Small calm group",
             "task": "A short class talk",
-            "pressure": "A small calm group. No questions.",
+            "pressure": "One encouraging voice. The class only listens.",
         },
         {
             "level": 2,
             "room": "More listeners, up to two questions",
             "task": "Explain a school project",
-            "pressure": "More listeners, and up to two questions.",
+            "pressure": "One person asks about the project. The others listen.",
         },
         {
             "level": 3,
             "room": "Interruptions and one harder question",
             "task": "Present to the class",
-            "pressure": "Interruptions, and one harder question.",
+            "pressure": "The class listens, and the replies stay encouraging.",
         },
     ],
     "18_plus": [
@@ -29,19 +29,19 @@ LEVELS = {
             "level": 1,
             "room": "Small calm group",
             "task": "A short presentation",
-            "pressure": "A small calm group. No questions.",
+            "pressure": "One simple voice, and listeners behind.",
         },
         {
             "level": 2,
             "room": "More listeners, up to two questions",
             "task": "Graduation-project discussion",
-            "pressure": "More listeners, and up to two questions.",
+            "pressure": "The committee questions the idea. No extra audience.",
         },
         {
             "level": 3,
             "room": "Interruptions and one harder question",
             "task": "Job interview",
-            "pressure": "Interruptions, and one harder question.",
+            "pressure": "A smaller interview room, and an unexpected question.",
         },
     ],
 }

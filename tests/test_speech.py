@@ -544,6 +544,136 @@ class SpeechRules(unittest.TestCase):
         self.assertIn("الطاقة", features["transcript"])
         self.assertNotIn("نانا", features["transcript"])
 
+    def test_younger_speakers_hear_encouragement(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("تشجّعه", prompt)
+            self.assertIn("لا تشكك", prompt)
+            self.assertIn("مشروع العلوم", prompt)
+            return "أحسنت، الفكرة واضحة. كمّل بمثال."
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                2,
+                0,
+                "مشروع العلوم",
+                [],
+                age="under_18",
+                task="Explain a school project",
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "supportive")
+        self.assertIn("أحسنت", action["line"])
+
+    def test_the_graduation_committee_questions_the_idea(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("التشكيك", prompt)
+            self.assertIn("يدافع", prompt)
+            self.assertIn("تطبيق جامعي", prompt)
+            return "ليش هالفكرة بالذات؟ أقنعني."
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                2,
+                1,
+                "تطبيق جامعي",
+                [],
+                age="18_plus",
+                task="Graduation-project discussion",
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["line"], "ليش هالفكرة بالذات؟ أقنعني.")
+
+    def test_the_interview_asks_an_unexpected_question(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("غير متوقع", prompt)
+            self.assertIn("محلل بيانات", prompt)
+            return "لو انقطع النظام أول يوم، وش بتسوي؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                1,
+                "محلل بيانات",
+                [],
+                age="18_plus",
+                task="Job interview",
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertIn("انقطع", action["line"])
+
+    def test_each_task_seats_its_own_committee(self):
+        from server.speech import opening_for, seated_roles
+
+        self.assertEqual(seated_roles("A short presentation"), ["interested"])
+        self.assertEqual(seated_roles("A short class talk"), ["supportive"])
+        self.assertEqual(seated_roles("Explain a school project"), ["supportive"])
+        self.assertEqual(len(seated_roles("Graduation-project discussion")), 6)
+        self.assertEqual(seated_roles("Job interview"), ["skeptical", "curious", "interrupter"])
+        self.assertIsNone(seated_roles(""))
+        young = opening_for("A short class talk", "under_18")
+        self.assertEqual(young["role"], "supportive")
+        self.assertIn("خذ راحتك", young["line"])
+
+    def test_the_first_adult_level_stays_simple(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("بسيط", prompt)
+            self.assertIn("لا تشكك", prompt)
+            self.assertIn("فكرة العرض", prompt)
+            return "واضحة. كمّل النقطة الجاية."
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                1,
+                0,
+                "فكرة العرض",
+                [],
+                age="18_plus",
+                task="A short presentation",
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["role"], "interested")
+        self.assertIn("واضحة", action["line"])
+
 
 if __name__ == "__main__":
     unittest.main()

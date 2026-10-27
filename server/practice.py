@@ -42,7 +42,8 @@ def start_session(path, user, level):
         "level": card,
         "mode": user["mode"],
         "avatar": user["avatar"],
-        "opening": opening_for(card["task"]),
+        "age_group": user["age_group"],
+        "opening": opening_for(card["task"], user["age_group"]),
     }, None
 
 
@@ -86,10 +87,10 @@ def take_turn(path, user, session_id, pcm, sample_rate):
             (session_id,),
         ).fetchone()
         context = prior["transcript"] if prior else ""
-        opening = None
-        if asked == 0:
-            card = _level_card(user, session["level"])
-            opening = opening_for(card["task"]) if card else None
+        card = _level_card(user, session["level"])
+        task = card["task"] if card else ""
+        age = user["age_group"] or ""
+        opening = opening_for(task, age) if asked == 0 and card else None
         first = conn.execute(
             """
             SELECT transcript FROM turns
@@ -127,6 +128,8 @@ def take_turn(path, user, session_id, pcm, sample_rate):
         history,
         opening,
         topic,
+        age,
+        task,
     )
     with connect(path) as conn:
         conn.execute(
