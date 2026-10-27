@@ -645,7 +645,28 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
 
   function faceSpeaker(member) {
     if (!speaker || !member) return;
-    speaker.userData.lookAt = member.position.clone();
+    const spot = new THREE.Vector3();
+    member.getWorldPosition(spot);
+    spot.y = speaker.position.y;
+    speaker.userData.lookAt = spot;
+    aimSpeaker(1);
+  }
+
+  function aimSpeaker(amount) {
+    const data = speaker.userData;
+    if (!data.lookAt) return;
+    const from = new THREE.Vector3();
+    speaker.getWorldPosition(from);
+    const dx = data.lookAt.x - from.x;
+    const dz = data.lookAt.z - from.z;
+    if (dx * dx + dz * dz < 0.04) return;
+    const target = Math.atan2(dx, dz);
+    if (data.yaw == null) data.yaw = speaker.rotation.y;
+    let turn = target - data.yaw;
+    while (turn > Math.PI) turn -= Math.PI * 2;
+    while (turn < -Math.PI) turn += Math.PI * 2;
+    data.yaw += turn * amount;
+    speaker.rotation.y = data.yaw;
   }
 
   function stepSpeaker(time, delta) {
@@ -659,16 +680,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         if (data.walkAction) data.walkAction.fadeOut(0.2);
         if (data.idle) data.idle.reset().fadeIn(0.2).play();
       }
-      return;
     }
-    if (!data.lookAt) return;
-    const dx = data.lookAt.x - speaker.position.x;
-    const dz = data.lookAt.z - speaker.position.z;
-    const target = Math.atan2(dx, dz);
-    let turn = target - speaker.rotation.y;
-    while (turn > Math.PI) turn -= Math.PI * 2;
-    while (turn < -Math.PI) turn += Math.PI * 2;
-    speaker.rotation.y += turn * Math.min(1, delta * 3.5);
+    aimSpeaker(Math.min(1, delta * 4));
   }
 
   function echoRoom(except, mood, line) {
