@@ -67,6 +67,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   const pitchQuat = new THREE.Quaternion();
   const pitchAxis = new THREE.Vector3(1, 0, 0);
   let stagePieces = [];
+  let hallShell = [];
   let stageLight = null;
   let houseLight = null;
   let hemiLight = null;
@@ -1034,6 +1035,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     stagePieces.forEach((mesh) => {
       mesh.visible = !bare;
     });
+    hallShell.forEach((mesh) => {
+      mesh.visible = plan.shell !== "office";
+    });
     if (plan.shell !== "office") return;
     scene.background = new THREE.Color(0xd5dde6);
     scene.fog = new THREE.Fog(0xd5dde6, 3.2, 8);
@@ -1048,7 +1052,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const carpet = new THREE.MeshStandardMaterial({ color: 0x4e6270, roughness: 0.96 });
     const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xf3efe6, roughness: 1 });
     addMesh(scene, new THREE.BoxGeometry(4.3, 0.04, 4.15), carpet, 0, 0.03, 0.15);
-    addMesh(scene, new THREE.BoxGeometry(4.5, 0.08, 4.35), ceilingMat, 0, 2.42, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(9, 0.1, 9), ceilingMat, 0.4, 2.38, 0.8);
     addMesh(scene, new THREE.BoxGeometry(4.35, 2.4, 0.1), wall, 0, 1.2, -1.92);
     addMesh(scene, new THREE.BoxGeometry(0.1, 2.4, 4.2), wall, -2.15, 1.2, 0.15);
     addMesh(scene, new THREE.BoxGeometry(0.1, 2.4, 4.2), wall, 2.15, 1.2, 0.15);
@@ -1075,6 +1079,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const plan = arrangement(session);
     if (plan.camera === "interview" && presentation !== "lobby") camera.fov = 58;
     stagePieces = [];
+    hallShell = [];
     if (presentation === "lobby") {
       camera.fov = 52;
       camera.position.set(0.2, 1.72, 4.2);
@@ -1150,6 +1155,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       0, 4.15, -1.2
     );
     ceiling.castShadow = false;
+    hallShell.push(back, left, right, ceiling);
     [-2.2, 0, 2.2].forEach((x) => {
       const lamp = addMesh(
         scene,
@@ -1158,6 +1164,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         x, 4.02, -1.5
       );
       lamp.castShadow = false;
+      hallShell.push(lamp);
       const bulb = new THREE.PointLight(0xffe2b0, 0.45, 7, 2);
       bulb.position.set(x, 3.65, -1.5);
       lamps.push(bulb);
