@@ -16,7 +16,7 @@ const OUTFIT = { navy: "#1f4e79", white: "#f4f7fb", black: "#243040" };
 
 let token = localStorage.getItem("token") || "";
 let user = null;
-let draft = { gender: "female", age_group: "under_18", skin: "medium", hair: "tied", outfit: "navy", mode: "normal" };
+let draft = { gender: "female", age_group: "18_plus", skin: "medium", hair: "tied", outfit: "navy", mode: "normal" };
 
 logoutButton.addEventListener("click", async () => {
   try { await api("/api/logout", { method: "POST" }); } catch (err) { /* already signed out */ }
@@ -200,7 +200,7 @@ function showSetup() {
       <label>الجنس</label>
       ${choiceGroup("gender", [["female", "أنثى"], ["male", "ذكر"]], draft.gender)}
       <label>الفئة العمرية</label>
-      ${choiceGroup("age_group", [["under_18", "أقل من 18"], ["18_plus", "18 فأكثر"]], draft.age_group)}
+      ${choiceGroup("age_group", [["18_plus", "18 فأكثر"], ["under_18", "أقل من 18"]], draft.age_group)}
       <p class="error" id="error"></p>
       <div class="row"><button class="primary" id="next" type="button">متابعة</button></div>
     </section>`, { avatar: draft });
