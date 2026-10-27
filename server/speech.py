@@ -533,7 +533,7 @@ def opening_for(task):
     found = table.get(task)
     if not found:
         return None
-    return {"role": found[0], "line": found[1]}
+    return {"role": found[0], "line": found[1], "mood": mood_for(found[0], found[1])}
 
 
 FOLLOW_UP = {
@@ -563,8 +563,8 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "أنت المستمع الذي سأل عن موضوع العرض.\n"
             "سؤالك: «%s»\n"
             "جوابه: «%s»\n"
-            "إذا فهمت الموضوع، سمِّه واطلب أن يبدأ العرض، بلا سؤال جديد.\n"
-            "إذا لم تفهم الموضوع، اسأل مرة واحدة: ما الموضوع؟\n"
+            "إذا فهمت الموضوع، سمِّه بجملة دافئة واطلب أن يبدأ العرض، بلا سؤال جديد.\n"
+            "إذا لم تفهم الموضوع، اسأل مرة واحدة بلطف: ما الموضوع؟\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تكرر: %s"
             % ((waiting.get("line") or "")[:300], heard[:700], previous),
@@ -576,7 +576,8 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "سؤالك السابق: «%s»\n"
             "جوابه الآن: «%s»\n"
             "إذا بقي الشك أو الجواب ناقص، قل «لست مقتنعاً» أو اطلب التفصيل، واختم بسؤال واحد.\n"
-            "إذا الجواب يكفي، اقبله بجملة قصيرة بلا سؤال.\n"
+            "إذا الجواب يكفي، اقبله بجملة قصيرة دافئة بلا سؤال.\n"
+            "اجعل الجملة خفيفة كحوار لعبة، بلا نبرة امتحان.\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تسلم الدور لشخص آخر، ولا تكرر: %s"
             % ((waiting.get("line") or "")[:300], heard[:700], previous),
@@ -586,7 +587,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         return _ask_groq(
             "أنت أحد أعضاء اللجنة، وأنت من يسأل.\n"
             "جواب المتحدث: «%s»\n"
-            "اسأل سؤالاً واحداً قصيراً عن هذا الجواب فقط.\n"
+            "اسأل سؤالاً واحداً قصيراً ودافئاً عن هذا الجواب فقط.\n"
             "في مناقشة المشروع اسأل عن المشروع. في المقابلة اسأل عن الوظيفة والعمل.\n"
             "يمكنك أن تبدي شكاً إذا لزم الأمر.\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
@@ -598,14 +599,29 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         "أنت تستمع إلى المتحدث الآن.\n"
         "قال حرفياً: «%s»\n"
         "شخصيتك: %s\n"
-        "اكتب جملة عربية واحدة. اذكر شيئاً قاله ثم رد عليه.\n"
-        "إذا كانت فكرته واضحة، قل إنها واضحة واطلب الفكرة التالية.\n"
+        "اكتب جملة عربية واحدة دافئة، كتعليق في لعبة. اذكر شيئاً قاله ثم رد عليه.\n"
+        "إذا كانت فكرته واضحة، قل إنها واضحة بلطف واطلب الفكرة التالية.\n"
         "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
         "ممنوع استخدام جملة عامة لا علاقة لها بكلامه.\n"
         "لا تكرر: %s"
         % (heard[:700], voices.get(role, role), previous),
         first_line_only=True,
     )
+
+
+def mood_for(role, line):
+    """A short body reaction so the listener feels present in the round."""
+    if _is_question(line):
+        if role == "uninterested":
+            return "aside"
+        if role in ("skeptical", "curious", "interrupter"):
+            return "lean"
+        return "nod"
+    if role in ("interested", "supportive"):
+        return "clap"
+    if role == "uninterested":
+        return "aside"
+    return "nod"
 
 
 def _is_question(line):
@@ -678,7 +694,7 @@ def adapt_audience(features, level, asked, transcript="", recent=None, history=N
         result["line"] = spoken
     elif waiting and render_api():
         result["role"] = resolve_role(waiting["role"], level)
-        result["line"] = "لست مقتنعاً بعد. ما الدليل على ما قلته؟"
+        result["line"] = "لسه عندي سؤال. وضّحها بمثال صغير؟"
     elif int(level) >= 2 and render_api():
         bank = FOLLOW_UP[int(level)]
         choice = bank[int(asked) % len(bank)]
@@ -692,6 +708,7 @@ def adapt_audience(features, level, asked, transcript="", recent=None, history=N
                 result["line"] = choice
                 break
     result["reply_seconds"] = 8 if int(level) >= 2 else 6
+    result["mood"] = mood_for(result["role"], result["line"])
     return result
 
 

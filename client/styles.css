@@ -212,6 +212,19 @@ button:focus-visible, .choice:focus-visible {
   text-align: center;
 }
 
+.stamps { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.stamp {
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(243, 234, 223, 0.16);
+  color: rgba(243, 234, 223, 0.55);
+}
+.stamp.on {
+  background: rgba(226, 181, 106, 0.16);
+  border-color: rgba(226, 181, 106, 0.45);
+  color: var(--amber);
+}
 .score {
   margin: 4px 0 0;
   font-size: 56px;

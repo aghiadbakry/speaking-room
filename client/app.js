@@ -364,11 +364,12 @@ function showRoom(session) {
   document.body.classList.add("in-room");
   logoutButton.hidden = true;
   const minutes = 4;
-  const pressure = ({
-    "A small calm group. No questions.": "مجموعة صغيرة وهادئة",
-    "More listeners, and up to two questions.": "مستمعون أكثر، وسؤالان على الأكثر",
-    "Interruptions, and one harder question.": "مقاطعات، وسؤال أصعب",
-  })[session.level.pressure] || "";
+  const aims = {
+    1: "هدف الجولة: خلّ الجمهور معك.",
+    2: "هدف الجولة: خلّ الفضولي يتابع مشروعك.",
+    3: "هدف الجولة: قرّب المشكك من فكرتك.",
+  };
+  const aim = aims[session.level.level] || "";
   app.innerHTML = `
     <section class="stage">
       <canvas id="scene"></canvas>
@@ -377,20 +378,20 @@ function showRoom(session) {
           <button class="ghost end" id="leave" type="button">إنهاء الجلسة</button>
           <div class="title-pill">
             <strong>مستوى ${session.level.level} — ${session.level.task_ar}</strong>
-            <span>${pressure}</span>
+            <span>${aim}</span>
           </div>
           <button class="ghost" id="headset" type="button">النظارة</button>
         </div>
         <aside class="panel side-left">
           <div class="timer-card">
-            <div class="metric"><span>الوقت المتبقي</span><b id="timer">${String(minutes).padStart(2, "0")}:00</b></div>
+            <div class="metric"><span>وقت الجولة</span><b id="timer">${String(minutes).padStart(2, "0")}:00</b></div>
             <div class="meter time"><span id="time-bar"></span></div>
           </div>
           <strong class="panel-title">الجمهور <span id="audience-count"></span></strong>
           <div id="audience"></div>
         </aside>
         <aside class="panel side-right">
-          <strong class="panel-title">المؤشرات الحية</strong>
+          <strong class="panel-title">جو الجولة</strong>
           <div class="metric"><span class="ico clarity">وضوح</span><b id="clarity-label">—</b></div>
           <div class="meter"><span id="clarity-bar"></span></div>
           <div class="metric"><span class="ico pace">سرعة الكلام</span><b id="pace-label">—</b></div>
@@ -401,17 +402,17 @@ function showRoom(session) {
           <div class="meter conf"><span id="conf-bar"></span></div>
         </aside>
         <aside class="panel corner tip">
-          <strong class="panel-title">نصيحة مباشرة</strong>
-          <p id="tip">وزّع نظرك على الجمهور، وتجنّب التركيز على شخص واحد.</p>
+          <strong class="panel-title">تلميح الجولة</strong>
+          <p id="tip">${aim}</p>
         </aside>
         <aside class="panel corner smart">
-          <strong class="panel-title">رد الجمهور</strong>
-          <p id="heard">المستوى الأول: تحدّث، ثم يصلك رد واحد.</p>
+          <strong class="panel-title">صوت الجمهور</strong>
+          <p id="heard">القاعة تستمع. اذكر فكرتك بهدوء.</p>
         </aside>
         <div class="dock">
           <div class="transcript" id="transcript">
             <canvas id="wave"></canvas>
-            <p id="caption">اضغط الميكروفون وتحدّث.</p>
+            <p id="caption">الأضواء تدفأ. اضغط المايك عندما تجهز.</p>
           </div>
           <div class="tools">
             <button class="mic" id="mic" type="button">مايك</button>
@@ -462,10 +463,10 @@ function showRoom(session) {
     if (heard) heard.textContent = session.opening.line;
     if (tip) {
       tip.textContent = session.level.level >= 2
-        ? "اللجنة تسأل أولاً. أجب، ثم انتظر السؤال التالي."
-        : "اذكر موضوعك، ثم ابدأ العرض.";
+        ? "الجولة بدأت بسؤال. أجب، ثم خذ وقتك."
+        : "اذكر موضوعك، ثم ابدأ العرض كأن القاعة معك.";
     }
-    setTimeout(() => SpeakingRoom.react(session.opening.role, session.opening.line), 700);
+    setTimeout(() => SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood), 2200);
   }
 
   async function finishLevel() {
@@ -483,23 +484,41 @@ function showRoom(session) {
   }
 }
 
+function curtainCall(result) {
+  const confidence = result.confidence || 0;
+  let title = "جولة ثانية أنفع";
+  if (!result.turns) title = "القاعة ما زالت تنتظرك";
+  else if (confidence >= 75) title = "الجمهور معك";
+  else if (confidence >= 55) title = "وقفة طيبة";
+  const stamps = [
+    { name: "الإيقاع", on: (result.pace || 0) >= 60 },
+    { name: "الوضوح", on: (result.clarity || 0) >= 60 },
+    { name: "تماسك القاعة", on: confidence >= 60 },
+  ];
+  return { title, stamps };
+}
+
 function showResult(result, session) {
   logoutButton.hidden = false;
   const report = result.report;
+  const curtain = curtainCall(result);
   const change = report && report.change !== null && report.change !== undefined
     ? (report.change >= 0 ? `تحسنت بمقدار ${report.change} نقطة` : `انخفضت بمقدار ${Math.abs(report.change)} نقطة`)
     : "لا توجد جلسة سابقة للمقارنة";
   mount(`
     <section class="card">
-      <p class="eyebrow">نتيجة الوقوف على المسرح</p>
-      <h2>نهاية المستوى ${result.level}</h2>
+      <p class="eyebrow">ستار الختام</p>
+      <h2>${curtain.title}</h2>
+      <div class="stamps">
+        ${curtain.stamps.map((stamp) => `<span class="stamp${stamp.on ? " on" : ""}">${stamp.on ? "✦" : "✧"} ${stamp.name}</span>`).join("")}
+      </div>
       ${result.turns ? `<p class="score">${result.confidence}٪</p><p class="lede">الثقة في «${session.level.task_ar}»</p>` : `<p class="lede">${session.level.task_ar}</p>`}
       <ul class="report-list">
         ${result.turns ? `<li>مستوى الثقة: ${result.confidence}٪</li>
         <li>وضوح الكلام: ${result.clarity || 0}٪</li>
         <li>السرعة: ${result.pace || 0}٪ من النطاق المناسب</li>
         <li>التوقفات: ${result.pauses || 0}٪</li>
-        <li>لقطات محسبة: ${result.turns}</li>` : `<li>لم يُلتقط كلام في هذه الجلسة، لذلك لا توجد نتيجة.</li>`}
+        <li>لقطات الجولة: ${result.turns}</li>` : `<li>لم يُلتقط كلام في هذه الجولة، لذلك لا توجد نتيجة.</li>`}
         ${result.feedback ? `<li>${escapeHtml(result.feedback)}</li>` : ""}
         ${report ? `<li>مقارنة بالجلسة السابقة: ${change}</li>
           <li>المهارة الأضعف: ${report.weak}</li>
@@ -606,12 +625,12 @@ async function sendChunk(sessionId, parts, sampleRate) {
   const heard = document.querySelector("#heard");
   const tip = document.querySelector("#tip");
   const tips = {
-    interested: "الكلام واضح. وزّع نظرك على بقية الجمهور.",
-    uninterested: "هذا المستمع شارد. اختصر وقل النتيجة.",
-    curious: "سؤال بسيط. أكمل الفكرة التي بدأتها.",
-    skeptical: "يطلب الدليل. اذكر مثالاً واحداً.",
-    interrupter: "مقاطعة. أجب باختصار ثم ارجع لفكرتك.",
-    supportive: "خذ نفسًا قصيرًا، ثم أكمل بالنقطة الرئيسية.",
+    interested: "النقطة وصلت. خلّ الباقين يسمعون الباقي.",
+    uninterested: "هذا يسرح شوي. أعطه الخلاصة بجملة.",
+    curious: "عجبته الفكرة. كمّلها.",
+    skeptical: "يبغى يتأكد. أعطه مثالاً واحداً.",
+    interrupter: "قاطعك بلطف. جاوبه وارجع لفكرتك.",
+    supportive: "معك. خذ نفساً وكمّل.",
   };
   if (data.empty) {
     if (heard) heard.textContent = data.line;
@@ -624,7 +643,7 @@ async function sendChunk(sessionId, parts, sampleRate) {
     }
     return;
   }
-  const speaker = SpeakingRoom.react(data.role, data.line);
+  const speaker = SpeakingRoom.react(data.role, data.line, data.mood);
   if (heard) heard.textContent = data.line;
   if (tip && tips[data.role]) tip.textContent = tips[data.role];
   const stress = document.querySelector("#stress-bar");

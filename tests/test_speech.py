@@ -418,6 +418,13 @@ class SpeechRules(unittest.TestCase):
             os.environ.pop("GROQ_API_KEY", None)
         self.assertEqual(action["role"], "interrupter")
 
+    def test_a_question_leans_in_and_praise_claps(self):
+        from server.speech import mood_for
+
+        self.assertEqual(mood_for("skeptical", "ما الدليل؟"), "lean")
+        self.assertEqual(mood_for("interested", "واضح، كمّل."), "clap")
+        self.assertEqual(mood_for("uninterested", "وين الخلاصة؟"), "aside")
+
     def test_silence_is_not_sent_to_the_transcript(self):
         os.environ["RENDER"] = "true"
         os.environ["GROQ_API_KEY"] = "test-key"
