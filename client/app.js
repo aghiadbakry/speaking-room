@@ -440,11 +440,13 @@ function showRoom(session) {
     const heard = document.querySelector("#heard");
     const tip = document.querySelector("#tip");
     if (heard) heard.textContent = beat.line;
-    if (tip) tip.textContent = `${beat.name} دخل الحديث. ارجع للمايك عندما تجهز.`;
     document.querySelectorAll(".audience-row").forEach((row) => {
       row.classList.toggle("active", Number(row.dataset.index) === beat.index);
     });
     setStance(beat.role, beat.mood, beat.line);
+    if (!offerFloor(beat.line, beat.mood, 8) && tip) {
+      tip.textContent = `${beat.name} دخل الحديث. ارجع للمايك عندما تجهز.`;
+    }
   };
   list.querySelectorAll(".audience-row").forEach((row) => {
     row.onclick = () => showBeat(SpeakingRoom.address(Number(row.dataset.index)));
@@ -461,6 +463,11 @@ function showRoom(session) {
     const bar = document.querySelector("#time-bar");
     if (node) node.textContent = `${m}:${s}`;
     if (bar) bar.style.width = `${(remaining / total) * 100}%`;
+    if (remaining === 60 && window.SpeakingRoom && SpeakingRoom.lastMinute) {
+      SpeakingRoom.lastMinute();
+      const caption = document.querySelector("#caption");
+      if (caption) caption.textContent = "الدقيقة الأخيرة.";
+    }
     if (remaining === 0) finishLevel();
   }, 1000);
 
@@ -486,6 +493,7 @@ function showRoom(session) {
     setTimeout(() => {
       SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood);
       setStance(session.opening.role, session.opening.mood, session.opening.line);
+      offerFloor(session.opening.line, session.opening.mood, session.level.level >= 2 ? 12 : 9);
     }, 2200);
   }
 
@@ -508,6 +516,19 @@ function showRoom(session) {
     document.body.classList.remove("in-room");
     showResult(result, session);
   }
+}
+
+function offerFloor(line, mood, seconds) {
+  const asking = /[؟?]/.test(line || "") || mood === "lean" || mood === "aside";
+  if (!window.SpeakingRoom || !SpeakingRoom.floor) return asking;
+  SpeakingRoom.floor(asking ? (seconds || 8) : 0);
+  if (asking) {
+    const tip = document.querySelector("#tip");
+    const caption = document.querySelector("#caption");
+    if (tip) tip.textContent = "الدور لك. أجب بهدوء.";
+    if (caption) caption.textContent = "الدور لك.";
+  }
+  return asking;
 }
 
 function setStance(role, mood, line) {
@@ -683,8 +704,11 @@ async function sendChunk(sessionId, parts, sampleRate) {
   }
   const speaker = SpeakingRoom.react(data.role, data.line, data.mood);
   setStance(data.role, data.mood, data.line);
+  if (data.transcript) SpeakingRoom.pinTopic(data.transcript);
+  const asking = offerFloor(data.line, data.mood, data.reply_seconds || 8);
+  if (percent(data.confidence) >= 60) SpeakingRoom.cheer();
   if (heard) heard.textContent = data.line;
-  if (tip && tips[data.role]) tip.textContent = tips[data.role];
+  if (tip && tips[data.role] && !asking) tip.textContent = tips[data.role];
   const stress = document.querySelector("#stress-bar");
   const conf = document.querySelector("#conf-bar");
   if (stress) stress.style.width = `${percent(data.stress)}%`;

@@ -542,13 +542,24 @@ FOLLOW_UP = {
 }
 
 
-def _audience_line(role, transcript, intent, recent, features, level=1, waiting=None):
+def _topic_clause(topic):
+    """The subject named at the start stays on the board for the rest of the round."""
+    text = (topic or "").strip().replace("%", "")
+    if not text:
+        return ""
+    return "الموضوع المثبت على اللوحة: «%s». ابقَ على هذا الموضوع.\n" % text[:80]
+
+
+def _audience_line(role, transcript, intent, recent, features, level=1, waiting=None, topic=""):
     """On Render, one new sentence about what was just said. Local stays on the fixed line."""
     if not render_api():
         return ""
     heard = (transcript or "").strip()
     if not heard:
         return ""
+
+    def ask(prompt):
+        return _ask_groq(_topic_clause(topic) + prompt, first_line_only=True)
     voices = {
         "interested": "مستمع مهتم. إذا كانت الجملة واضحة، سمِّ الفكرة وقل إنها واضحة ثم اطلب النقطة التالية.",
         "uninterested": "مستمع يريد خلاصة الفكرة التي قيلت، باسمها.",
@@ -559,7 +570,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
     }
     previous = " | ".join(recent[:4]) if recent else "لا يوجد"
     if waiting and int(level) < 2:
-        return _ask_groq(
+        return ask(
             "أنت المستمع الذي سأل عن موضوع العرض.\n"
             "سؤالك: «%s»\n"
             "جوابه: «%s»\n"
@@ -567,11 +578,10 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "إذا لم تفهم الموضوع، اسأل مرة واحدة بلطف: ما الموضوع؟\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تكرر: %s"
-            % ((waiting.get("line") or "")[:300], heard[:700], previous),
-            first_line_only=True,
+            % ((waiting.get("line") or "")[:300], heard[:700], previous)
         )
     if waiting:
-        return _ask_groq(
+        return ask(
             "أنت نفس العضو الذي سأل، وتكمل الحديث معه أنت وحدك.\n"
             "سؤالك السابق: «%s»\n"
             "جوابه الآن: «%s»\n"
@@ -580,11 +590,10 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "اجعل الجملة خفيفة كحوار لعبة، بلا نبرة امتحان.\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تسلم الدور لشخص آخر، ولا تكرر: %s"
-            % ((waiting.get("line") or "")[:300], heard[:700], previous),
-            first_line_only=True,
+            % ((waiting.get("line") or "")[:300], heard[:700], previous)
         )
     if int(level) >= 2:
-        return _ask_groq(
+        return ask(
             "أنت أحد أعضاء اللجنة، وأنت من يسأل.\n"
             "جواب المتحدث: «%s»\n"
             "اسأل سؤالاً واحداً قصيراً ودافئاً عن هذا الجواب فقط.\n"
@@ -592,10 +601,9 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
             "يمكنك أن تبدي شكاً إذا لزم الأمر.\n"
             "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
             "لا تكرر: %s"
-            % (heard[:700], previous),
-            first_line_only=True,
+            % (heard[:700], previous)
         )
-    return _ask_groq(
+    return ask(
         "أنت تستمع إلى المتحدث الآن.\n"
         "قال حرفياً: «%s»\n"
         "شخصيتك: %s\n"
@@ -604,8 +612,7 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         "إذا كانت الكلمات غير مفهومة، اطلب إعادة الجملة ولا تقتبسها.\n"
         "ممنوع استخدام جملة عامة لا علاقة لها بكلامه.\n"
         "لا تكرر: %s"
-        % (heard[:700], voices.get(role, role), previous),
-        first_line_only=True,
+        % (heard[:700], voices.get(role, role), previous)
     )
 
 
@@ -674,7 +681,7 @@ def _usable_line(text, recent):
     return line
 
 
-def adapt_audience(features, level, asked, transcript="", recent=None, history=None, opening=None):
+def adapt_audience(features, level, asked, transcript="", recent=None, history=None, opening=None, topic=""):
     """Chapter 3 chooses the listener. Render then writes a line about the speech."""
     result = _adapt_rules(features, level, asked)
     recent = recent or []
@@ -686,7 +693,7 @@ def adapt_audience(features, level, asked, transcript="", recent=None, history=N
         _hand_off(result, level, history, waiting)
     spoken = _usable_line(
         _audience_line(
-            result["role"], transcript, result["line"], recent, features, level, waiting
+            result["role"], transcript, result["line"], recent, features, level, waiting, topic
         ),
         recent,
     )

@@ -75,6 +75,13 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   let speaker = null;
   let lightGoal = { stage: 7.2, house: 2.8, exposure: 1.08 };
   let finaleUntil = 0;
+  let floorUntil = 0;
+  let late = false;
+  let cheered = false;
+  let topicPinned = false;
+  let pendingTopic = "";
+  let board = null;
+  let audioCtx = null;
   let entrance = 1;
   let pendingReact = null;
   let onCanvasClick = null;
@@ -156,6 +163,45 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
+  }
+
+  function topicTexture(text) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 320;
+    const pen = canvas.getContext("2d");
+    pen.fillStyle = "#f7f1e4";
+    pen.fillRect(0, 0, 512, 320);
+    pen.fillStyle = "#8a5a32";
+    pen.fillRect(0, 0, 512, 10);
+    pen.fillStyle = "#8d6844";
+    pen.font = "700 28px 'IBM Plex Sans Arabic', 'Geeza Pro', Arial, sans-serif";
+    pen.direction = "rtl";
+    pen.textAlign = "right";
+    pen.fillText("الموضوع", 470, 78);
+    pen.fillStyle = "#1c2430";
+    pen.font = "600 40px 'IBM Plex Sans Arabic', 'Geeza Pro', Arial, sans-serif";
+    const clean = String(text || "").replace(/\s+/g, " ").trim();
+    wrap(pen, clean, 430).slice(0, 2).forEach((line, index) => {
+      pen.fillText(line, 470, 160 + index * 58);
+    });
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  function paintTopic(text) {
+    if (!board || topicPinned) return;
+    const clean = String(text || "").trim();
+    if (!clean) return;
+    topicPinned = true;
+    const next = topicTexture(clean);
+    const previous = board.material.map;
+    board.material.map = next;
+    board.material.emissive.setHex(0x4a341c);
+    board.material.emissiveIntensity = 0.22;
+    board.material.needsUpdate = true;
+    if (previous) previous.dispose();
   }
 
   function commentTexture(name, text) {
@@ -520,6 +566,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         const pending = pendingReact;
         pendingReact = null;
         window.SpeakingRoom.react(pending.role, pending.line, pending.mood);
+        if (performance.now() / 1000 < floorUntil && activeMember) {
+          beginReaction(activeMember, "yield", 2.2);
+        }
       }
       if (renderer && scene && camera) renderer.render(scene, camera);
     }).catch((err) => {
@@ -597,6 +646,14 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       yawQuat.setFromAxisAngle(yawAxis, 0.72 * k);
       bones.Head.quaternion.multiply(yawQuat);
     }
+    if (react.kind === "yield") {
+      const torso = bones.Chest || bones.Spine;
+      const torsoPose = pose.Chest || pose.Spine;
+      if (torso && torsoPose) {
+        pitchQuat.setFromAxisAngle(pitchAxis, -0.34 * k);
+        torso.quaternion.copy(torsoPose.q).multiply(pitchQuat);
+      }
+    }
     if (react.kind === "quiet" && bones.Head && pose.Head) {
       const yaw = Math.max(-0.7, Math.min(0.7, -(data.gaze || 0) * 0.22));
       yawQuat.setFromAxisAngle(yawAxis, yaw);
@@ -617,6 +674,101 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       if (data.wave) data.wave.fadeOut(0.2);
       if (data.idle) data.idle.reset().fadeIn(0.2).play();
     }
+  }
+
+  function ensureSound() {
+    if (audioCtx) return audioCtx;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    audioCtx = new Ctx();
+    return audioCtx;
+  }
+
+  function noiseSource(ctx, seconds) {
+    const buffer = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * seconds)), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let index = 0; index < data.length; index += 1) data[index] = Math.random() * 2 - 1;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    return source;
+  }
+
+  function playRoomSound(kind, x) {
+    const ctx = ensureSound();
+    if (!ctx || presentation !== "session") return;
+    if (ctx.state === "suspended") {
+      ctx.resume().then(() => {
+        if (ctx.state === "running") playRoomSound(kind, x);
+      });
+      return;
+    }
+    const now = ctx.currentTime;
+    const gain = ctx.createGain();
+    let output = gain;
+    if (ctx.createStereoPanner) {
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = Math.max(-0.75, Math.min(0.75, (x || 0) / 4));
+      gain.connect(pan);
+      output = pan;
+    }
+    output.connect(ctx.destination);
+    if (kind === "clap") {
+      [0, 0.09].forEach((at, index) => {
+        const source = noiseSource(ctx, 0.12);
+        const filter = ctx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.value = index === 0 ? 1800 : 1300;
+        const tap = ctx.createGain();
+        source.connect(filter);
+        filter.connect(tap);
+        tap.connect(gain);
+        tap.gain.setValueAtTime(0.0001, now + at);
+        tap.gain.exponentialRampToValueAtTime(index === 0 ? 0.2 : 0.14, now + at + 0.012);
+        tap.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.12);
+        source.start(now + at);
+        source.stop(now + at + 0.13);
+      });
+      return;
+    }
+    if (kind === "chair") {
+      const osc = ctx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(190, now);
+      osc.frequency.exponentialRampToValueAtTime(74, now + 0.18);
+      const source = noiseSource(ctx, 0.16);
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 480;
+      source.connect(filter);
+      filter.connect(gain);
+      osc.connect(gain);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.07, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+      osc.start(now);
+      osc.stop(now + 0.22);
+      source.start(now);
+      source.stop(now + 0.18);
+      return;
+    }
+    const source = noiseSource(ctx, 0.36);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 420;
+    filter.Q.value = 0.7;
+    source.connect(filter);
+    filter.connect(gain);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.08);
+    gain.gain.linearRampToValueAtTime(0.0001, now + 0.34);
+    source.start(now);
+    source.stop(now + 0.36);
+  }
+
+  function soundFor(kind) {
+    if (kind === "clap" || kind === "wave") return "clap";
+    if (kind === "lean" || kind === "aside" || kind === "yield") return "chair";
+    return "murmur";
   }
 
   function beginReaction(member, kind, seconds) {
@@ -689,11 +841,13 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   }
 
   function echoRoom(except, mood, line) {
+    const asking = mood === "lean" || mood === "aside" || /[؟?]/.test(line || "");
+    let crowd = false;
     people.forEach((member) => {
       if (member === except || !member.userData.seated) return;
       const role = member.userData.role;
-      const asking = mood === "lean" || mood === "aside" || /[؟?]/.test(line || "");
       if (role === "crowd") {
+        crowd = true;
         if (asking) {
           member.userData.gaze = except ? except.position.x - member.position.x : 0;
           beginReaction(member, "quiet", 1.7);
@@ -711,6 +865,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       else kind = "clap";
       beginReaction(member, kind, 1.35);
     });
+    if (crowd) playRoomSound(asking ? "murmur" : "clap", 0);
   }
 
   function addressPerson(index) {
@@ -723,6 +878,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     activeMember = member;
     const mood = ASIDE_MOOD[role] || "nod";
     beginReaction(member, mood, 1.7);
+    playRoomSound(soundFor(mood), member.position.x);
     faceSpeaker(member);
     echoRoom(member, mood, line);
     if (line) showComment(member, line);
@@ -894,6 +1050,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       0, 2.35, -6.48
     );
     screen.castShadow = false;
+    board = screen;
+    if (pendingTopic) paintTopic(pendingTopic);
     if (presentation === "session") paintLights(arrangement(session.level.level).camera);
 
     placePeople(session);
@@ -983,6 +1141,16 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         if (stageLight) stageLight.intensity = 1.1 + entrance * (lightGoal.stage - 1.1);
         if (houseLight) houseLight.intensity = 0.45 + entrance * (lightGoal.house - 0.45);
         renderer.toneMappingExposure = 0.7 + entrance * (lightGoal.exposure - 0.7);
+      } else {
+        if (stageLight) {
+          const goal = lightGoal.stage * (time < floorUntil ? 1.32 : 1);
+          stageLight.intensity += (goal - stageLight.intensity) * Math.min(1, delta * 2.4);
+        }
+        if (late && houseLight) {
+          houseLight.intensity += (lightGoal.house * 0.58 - houseLight.intensity) * Math.min(1, delta * 0.7);
+          const exposure = lightGoal.exposure * 0.86;
+          renderer.toneMappingExposure += (exposure - renderer.toneMappingExposure) * Math.min(1, delta * 0.7);
+        }
       }
       const ease = 1 - Math.pow(1 - intro, 3);
       camera.position.lerpVectors(camFrom, camTo, ease);
@@ -1013,6 +1181,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       window.addEventListener("resize", resize);
       renderer.setAnimationLoop(tick);
       requestAnimationFrame(resize);
+      const sound = ensureSound();
+      if (sound && sound.state === "suspended") sound.resume();
       onCanvasClick = (event) => {
         const index = pickPerson(event);
         if (index < 0) return;
@@ -1072,6 +1242,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       }
       pendingReact = null;
       beginReaction(activeMember, mood || "nod", 1.8);
+      playRoomSound(soundFor(mood || "nod"), activeMember.position.x);
       faceSpeaker(activeMember);
       echoRoom(activeMember, mood || "nod", line);
       if (line) showComment(activeMember, line);
@@ -1086,6 +1257,45 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         else beginReaction(member, "quiet", 2.5);
       });
       if (speaker) speaker.userData.lookAt = new THREE.Vector3(0, 1.1, -2.2);
+      playRoomSound(won ? "clap" : "murmur", 0);
+    },
+    pinTopic: function (text) {
+      const clean = String(text || "").trim();
+      if (!clean || topicPinned) return;
+      if (!board) {
+        pendingTopic = clean;
+        return;
+      }
+      paintTopic(clean);
+    },
+    floor: function (seconds) {
+      if (!seconds) {
+        floorUntil = 0;
+        return;
+      }
+      floorUntil = performance.now() / 1000 + seconds;
+      if (activeMember) beginReaction(activeMember, "yield", Math.min(2.4, seconds));
+    },
+    cheer: function () {
+      if (cheered || presentation !== "session") return;
+      const crowd = people.filter((member) => member.userData.seated && member.userData.role === "crowd");
+      const row = crowd.length
+        ? crowd
+        : people.filter((member) => member.userData.role === "interested" || member.userData.role === "supportive");
+      if (!row.length) return;
+      cheered = true;
+      row.forEach((member) => beginReaction(member, "clap", 1.7));
+      playRoomSound("clap", row[0].position.x);
+    },
+    lastMinute: function () {
+      if (late || presentation !== "session") return;
+      late = true;
+      const watcher = people.find((member) => member.userData.role === "interrupter")
+        || people.find((member) => member.userData.role === "skeptical");
+      if (watcher) {
+        beginReaction(watcher, "aside", 1.8);
+        playRoomSound("chair", watcher.position.x);
+      }
     },
     async enterHeadset() {
       if (!navigator.xr || !renderer) return false;
@@ -1119,6 +1329,12 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       speaker = null;
       lamps = [];
       finaleUntil = 0;
+      floorUntil = 0;
+      late = false;
+      cheered = false;
+      topicPinned = false;
+      pendingTopic = "";
+      board = null;
       scene = null;
     },
   };

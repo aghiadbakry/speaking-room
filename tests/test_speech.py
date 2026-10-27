@@ -280,6 +280,35 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(action["line"], "ما الخبرة الأقرب إلى التحليل؟")
         self.assertEqual(action["reply_seconds"], 8)
 
+    def test_a_pinned_topic_stays_in_the_next_question(self):
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        import server.speech as speech
+
+        def fake(prompt, first_line_only):
+            self.assertIn("الموضوع المثبت على اللوحة", prompt)
+            self.assertIn("الطاقة الشمسية", prompt)
+            self.assertIn("أحد أعضاء اللجنة", prompt)
+            self.assertIn("نبدأ بالتجربة", prompt)
+            return "ما الذي ستقيسه في التجربة؟"
+
+        original = speech._ask_groq
+        speech._ask_groq = fake
+        try:
+            action = adapt_audience(
+                {"pace": 140, "pauses": 0, "repeated": 0, "clarity": 0.9},
+                3,
+                1,
+                "نبدأ بالتجربة",
+                [],
+                topic="الطاقة الشمسية",
+            )
+        finally:
+            speech._ask_groq = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(action["line"], "ما الذي ستقيسه في التجربة؟")
+
     def test_a_level_two_turn_without_words_still_asks_a_question(self):
         os.environ["RENDER"] = "true"
         os.environ["GROQ_API_KEY"] = "test-key"
