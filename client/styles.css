@@ -311,10 +311,18 @@ body.in-room #app { width: 100vw; height: 100vh; margin: 0; padding: 0; }
 .ico.pace::before { background: #7fd0d4; }
 .audience-row {
   display: flex; align-items: center; gap: 8px;
+  width: 100%;
   padding: 7px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
 }
+.aside-hint { margin: 8px 0 0; color: rgba(243, 234, 223, 0.72); font-size: 13px; }
 .audience-row.active {
   color: #fff8ec;
   background: rgba(226, 181, 106, 0.16);

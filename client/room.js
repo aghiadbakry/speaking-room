@@ -17,6 +17,22 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   const SKIN_CYCLE = [0xf3d2b5, 0xe0b48a, 0xc68642, 0x8d5524, 0x6b3a22];
   const OUTFIT = { navy: 0x1f4e79, white: 0xe8eef5, black: 0x243040 };
   const COUNTS = { 1: 4, 2: 6, 3: 6 };
+  const ASIDES = {
+    interested: ["أنا معك، كمّل.", "هذه وصلتني."],
+    uninterested: ["اختصرها لي.", "وين الخلاصة؟"],
+    curious: ["عندي فضول.", "وضّح هذه أكثر."],
+    skeptical: ["لسه أفكر.", "أقنعني بهدوء."],
+    interrupter: ["لحظة، أسمعك.", "خذها من هنا."],
+    supportive: ["خذ راحتك.", "تمام، كمّل."],
+  };
+  const ASIDE_MOOD = {
+    interested: "clap",
+    uninterested: "aside",
+    curious: "lean",
+    skeptical: "lean",
+    interrupter: "wave",
+    supportive: "nod",
+  };
   const AUDIENCE_FILES = [
     "female-suit.glb",
     "male-casual.glb",
@@ -53,6 +69,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   let houseLight = null;
   let entrance = 1;
   let pendingReact = null;
+  let onCanvasClick = null;
   let libraryPromise = null;
 
   function cloth(color) {
@@ -298,7 +315,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     group.rotation.y = options.rotY || 0;
     const bones = {};
     model.traverse((obj) => {
-      if (obj.isBone) bones[obj.name] = obj;
+      if (!obj.isBone) return;
+      bones[obj.name] = obj;
+      bones[obj.name.replace(/\./g, "")] = obj;
     });
     const mixer = new THREE.AnimationMixer(model);
     const idleClip = THREE.AnimationClip.findByName(gltf.animations, "Idle") || gltf.animations[0];
@@ -452,11 +471,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         bones.Head.position.copy(pose.Head.p);
       }
       playReaction(data, time);
-    }
-    if (!active && data.waving) {
-      data.waving = false;
-      data.wave.fadeOut(0.2);
-      data.idle.reset().fadeIn(0.2).play();
+      syncGesture(data);
     }
   }
 
@@ -468,29 +483,99 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       data.reaction = null;
       return;
     }
-    const k = Math.sin(Math.min(1, (1.5 - left) / 1.5) * Math.PI);
+    const span = react.span || 1.6;
+    const k = Math.sin(Math.min(1, (span - left) / span) * Math.PI);
     const bones = data.bones || {};
     const pose = data.seatedPose || {};
-    if ((react.kind === "nod" || react.kind === "clap") && bones.Head && pose.Head) {
-      pitchQuat.setFromAxisAngle(pitchAxis, 0.22 * k);
+    if ((react.kind === "nod" || react.kind === "clap" || react.kind === "wave") && bones.Head && pose.Head) {
+      pitchQuat.setFromAxisAngle(pitchAxis, 0.48 * k);
       bones.Head.quaternion.multiply(pitchQuat);
     }
-    if (react.kind === "lean" && bones.Spine && pose.Spine) {
-      pitchQuat.setFromAxisAngle(pitchAxis, 0.16 * k);
-      bones.Spine.quaternion.copy(pose.Spine.q).multiply(pitchQuat);
+    if (react.kind === "lean") {
+      const torso = bones.Chest || bones.Spine;
+      const torsoPose = pose.Chest || pose.Spine;
+      if (torso && torsoPose) {
+        pitchQuat.setFromAxisAngle(pitchAxis, 0.42 * k);
+        torso.quaternion.copy(torsoPose.q).multiply(pitchQuat);
+      }
+      if (bones.Head && pose.Head) {
+        pitchQuat.setFromAxisAngle(pitchAxis, 0.2 * k);
+        bones.Head.quaternion.multiply(pitchQuat);
+      }
     }
     if (react.kind === "aside" && bones.Head && pose.Head) {
-      yawQuat.setFromAxisAngle(yawAxis, 0.32 * k);
+      yawQuat.setFromAxisAngle(yawAxis, 0.72 * k);
       bones.Head.quaternion.multiply(yawQuat);
     }
-    if (react.kind === "clap") {
-      ["LowerArmL", "LowerArmR"].forEach((name) => {
-        if (!bones[name] || !pose[name]) return;
-        const sign = name.endsWith("L") ? 0.55 : -0.55;
-        pitchQuat.setFromAxisAngle(pitchAxis, sign * k);
-        bones[name].quaternion.copy(pose[name].q).multiply(pitchQuat);
-      });
+  }
+
+  function syncGesture(data) {
+    const kind = data.reaction && data.reaction.kind;
+    const waving = kind === "clap" || kind === "wave";
+    if (waving && data.wave && !data.waving) {
+      data.waving = true;
+      if (data.idle) data.idle.fadeOut(0.12);
+      data.wave.reset().fadeIn(0.12).play();
     }
+    if (!waving && data.waving) {
+      data.waving = false;
+      if (data.wave) data.wave.fadeOut(0.2);
+      if (data.idle) data.idle.reset().fadeIn(0.2).play();
+    }
+  }
+
+  function beginReaction(member, kind, seconds) {
+    const span = seconds || 1.6;
+    member.userData.reaction = {
+      kind: kind,
+      span: span,
+      until: performance.now() / 1000 + span,
+    };
+  }
+
+  function echoRoom(except, mood) {
+    people.forEach((member) => {
+      if (member === except || !member.userData.seated) return;
+      const role = member.userData.role;
+      let kind = "nod";
+      if (role === "uninterested") kind = "aside";
+      else if (role === "interrupter") kind = "wave";
+      else if (role === "skeptical" || role === "curious") kind = mood === "clap" ? "nod" : "lean";
+      else if (mood === "lean" || mood === "aside") kind = "nod";
+      else kind = "clap";
+      beginReaction(member, kind, 1.35);
+    });
+  }
+
+  function addressPerson(index) {
+    const member = people[index];
+    if (!member || !member.userData.seated) return null;
+    const role = member.userData.role;
+    const bank = ASIDES[role] || ASIDES.interested;
+    const line = bank[(member.userData.asides || 0) % bank.length];
+    member.userData.asides = (member.userData.asides || 0) + 1;
+    activeMember = member;
+    const mood = ASIDE_MOOD[role] || "nod";
+    beginReaction(member, mood, 1.7);
+    echoRoom(member, mood);
+    if (line) showComment(member, line);
+    if (renderer && scene && camera) renderer.render(scene, camera);
+    return { index: index, role: role, name: member.userData.name, line: line, mood: mood };
+  }
+
+  function pickPerson(event) {
+    if (!renderer || !camera) return -1;
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return -1;
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(x, y), camera);
+    const hits = ray.intersectObjects(people, true);
+    if (!hits.length) return -1;
+    let obj = hits[0].object;
+    while (obj && people.indexOf(obj) < 0) obj = obj.parent;
+    return obj ? people.indexOf(obj) : -1;
   }
 
   function deskRow(z, width) {
@@ -696,6 +781,14 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const time = now / 1000;
     mixers.forEach((mixer) => mixer.update(delta));
     people.forEach((member) => applyPose(member, time));
+    if (presentation === "session" && entrance >= 1 && time - (tick.glance || 0) > 3.4) {
+      tick.glance = time;
+      const quiet = people.filter((member) => member.userData.seated && member !== activeMember && !member.userData.reaction);
+      if (quiet.length) {
+        const member = quiet[Math.floor(Math.random() * quiet.length)];
+        beginReaction(member, member.userData.role === "uninterested" ? "aside" : "nod", 1.05);
+      }
+    }
     if (comment) {
       comment.userData.grow = Math.min(1, comment.userData.grow + 0.07);
       const grow = comment.userData.grow;
@@ -748,7 +841,24 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       window.addEventListener("resize", resize);
       renderer.setAnimationLoop(tick);
       requestAnimationFrame(resize);
+      onCanvasClick = (event) => {
+        const index = pickPerson(event);
+        if (index < 0) return;
+        const beat = addressPerson(index);
+        if (beat) canvas.dispatchEvent(new CustomEvent("audience", { detail: beat }));
+      };
+      canvas.addEventListener("pointerdown", onCanvasClick);
       return plannedAudience(session.level.level);
+    },
+    address: function (index) {
+      const beat = addressPerson(index);
+      return beat;
+    },
+    notice: function () {
+      people.forEach((member) => {
+        if (!member.userData.seated) return;
+        beginReaction(member, member.userData.role === "uninterested" ? "aside" : "nod", 1.25);
+      });
     },
     lobby: function (canvas, avatar) {
       this.close();
@@ -789,10 +899,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         return -1;
       }
       pendingReact = null;
-      activeMember.userData.reaction = {
-        kind: mood || "nod",
-        until: performance.now() / 1000 + 1.5,
-      };
+      beginReaction(activeMember, mood || "nod", 1.8);
+      echoRoom(activeMember, mood || "nod");
       if (line) showComment(activeMember, line);
       if (renderer && scene && camera) renderer.render(scene, camera);
       return people.indexOf(activeMember);
@@ -818,10 +926,12 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       spoken = {};
       window.removeEventListener("resize", resize);
       if (renderer) {
+        if (onCanvasClick) renderer.domElement.removeEventListener("pointerdown", onCanvasClick);
         renderer.setAnimationLoop(null);
         renderer.dispose();
         renderer = null;
       }
+      onCanvasClick = null;
       people = [];
       pendingReact = null;
       scene = null;

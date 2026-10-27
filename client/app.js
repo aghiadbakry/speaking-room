@@ -389,6 +389,7 @@ function showRoom(session) {
           </div>
           <strong class="panel-title">الجمهور <span id="audience-count"></span></strong>
           <div id="audience"></div>
+          <p class="aside-hint">اضغط اسماً، أو الشخص نفسه، ليدخل الحديث.</p>
         </aside>
         <aside class="panel side-right">
           <strong class="panel-title">جو الجولة</strong>
@@ -428,11 +429,25 @@ function showRoom(session) {
   const count = document.querySelector("#audience-count");
   if (count) count.textContent = `(${members.length})`;
   list.innerHTML = members.map((member) => `
-    <div class="audience-row" data-index="${member.index}">
+    <button class="audience-row" data-index="${member.index}" type="button">
       <span class="avatar-dot" style="background:${member.color}"></span>
       <span>${member.name}</span>
-    </div>
+    </button>
   `).join("");
+  const showBeat = (beat) => {
+    if (!beat) return;
+    const heard = document.querySelector("#heard");
+    const tip = document.querySelector("#tip");
+    if (heard) heard.textContent = beat.line;
+    if (tip) tip.textContent = `${beat.name} دخل الحديث. ارجع للمايك عندما تجهز.`;
+    document.querySelectorAll(".audience-row").forEach((row) => {
+      row.classList.toggle("active", Number(row.dataset.index) === beat.index);
+    });
+  };
+  list.querySelectorAll(".audience-row").forEach((row) => {
+    row.onclick = () => showBeat(SpeakingRoom.address(Number(row.dataset.index)));
+  });
+  canvas.addEventListener("audience", (event) => showBeat(event.detail));
 
   let remaining = minutes * 60;
   const total = remaining;
@@ -587,7 +602,8 @@ async function toggleMic(sessionId, level) {
     processor.connect(silent);
     silent.connect(context.destination);
     button.classList.add("live");
-    if (caption) caption.textContent = "المايك يعمل. تحدّث الآن.";
+    if (caption) caption.textContent = "المايك يعمل. الجمهور يلتفت إليك.";
+    if (window.SpeakingRoom) SpeakingRoom.notice();
   } catch (err) {
     if (stream) stream.getTracks().forEach((track) => track.stop());
     context.close();
