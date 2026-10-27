@@ -82,6 +82,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   let pendingTopic = "";
   let board = null;
   let audioCtx = null;
+  let talkingRole = "";
+  let hushed = false;
   let entrance = 1;
   let pendingReact = null;
   let onCanvasClick = null;
@@ -611,6 +613,11 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       }
       playReaction(data, time);
       syncGesture(data);
+      if (talkingRole && data.role === talkingRole && bones.Head) {
+        const open = Math.abs(Math.sin(time * 14)) * 0.16;
+        pitchQuat.setFromAxisAngle(pitchAxis, open);
+        bones.Head.quaternion.multiply(pitchQuat);
+      }
     }
   }
 
@@ -694,6 +701,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   }
 
   function playRoomSound(kind, x) {
+    if (hushed) return;
     const ctx = ensureSound();
     if (!ctx || presentation !== "session") return;
     if (ctx.state === "suspended") {
@@ -865,7 +873,11 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       else kind = "clap";
       beginReaction(member, kind, 1.35);
     });
-    if (crowd) playRoomSound(asking ? "murmur" : "clap", 0);
+    if (crowd && renderer && !hushed) {
+      playRoomSound(asking ? "murmur" : "clap", 0);
+      const line = asking ? "خلّنا نسمع." : "تمام، كمّلوا.";
+      renderer.domElement.dispatchEvent(new CustomEvent("murmur", { detail: { role: "crowd", line: line } }));
+    }
   }
 
   function addressPerson(index) {
@@ -875,6 +887,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const bank = ASIDES[role] || ASIDES.interested;
     const line = bank[(member.userData.asides || 0) % bank.length];
     member.userData.asides = (member.userData.asides || 0) + 1;
+    member.userData.lastLine = line;
     activeMember = member;
     const mood = ASIDE_MOOD[role] || "nod";
     beginReaction(member, mood, 1.7);
@@ -884,6 +897,18 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     if (line) showComment(member, line);
     if (renderer && scene && camera) renderer.render(scene, camera);
     return { index: index, role: role, name: member.userData.name, line: line, mood: mood };
+  }
+
+  function replayPerson(index) {
+    const member = people[index];
+    if (!member || !member.userData.lastLine) return null;
+    activeMember = member;
+    const line = member.userData.lastLine;
+    beginReaction(member, "nod", 1.5);
+    faceSpeaker(member);
+    showComment(member, line);
+    if (renderer && scene && camera) renderer.render(scene, camera);
+    return { index: index, role: member.userData.role, name: member.userData.name, line: line, mood: "nod" };
   }
 
   function pickPerson(event) {
@@ -1186,7 +1211,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       onCanvasClick = (event) => {
         const index = pickPerson(event);
         if (index < 0) return;
-        const beat = addressPerson(index);
+        const member = people[index];
+        const beat = member && member.userData.lastLine ? replayPerson(index) : addressPerson(index);
         if (beat) canvas.dispatchEvent(new CustomEvent("audience", { detail: beat }));
       };
       canvas.addEventListener("pointerdown", onCanvasClick);
@@ -1241,6 +1267,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         return -1;
       }
       pendingReact = null;
+      if (line) activeMember.userData.lastLine = line;
       beginReaction(activeMember, mood || "nod", 1.8);
       playRoomSound(soundFor(mood || "nod"), activeMember.position.x);
       faceSpeaker(activeMember);
@@ -1258,6 +1285,21 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       });
       if (speaker) speaker.userData.lookAt = new THREE.Vector3(0, 1.1, -2.2);
       playRoomSound(won ? "clap" : "murmur", 0);
+    },
+    replay: function (index) {
+      return replayPerson(index);
+    },
+    talk: function (role, on) {
+      if (on) {
+        if (role === "crowd" && talkingRole && talkingRole !== "crowd") return;
+        talkingRole = role || "";
+        return;
+      }
+      if (!role || talkingRole === role) talkingRole = "";
+    },
+    mute: function (on) {
+      hushed = !!on;
+      if (hushed) talkingRole = "";
     },
     pinTopic: function (text) {
       const clean = String(text || "").trim();
@@ -1335,6 +1377,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       topicPinned = false;
       pendingTopic = "";
       board = null;
+      talkingRole = "";
+      hushed = false;
       scene = null;
     },
   };

@@ -321,6 +321,17 @@ async function showHome() {
 let micState = null;
 let voicePlayer = null;
 let voiceJob = 0;
+let voiceQuiet = false;
+let murmurPlayer = null;
+let murmurJob = 0;
+const VOICE_NAMES = {
+  interested: "نورة",
+  uninterested: "سلطان",
+  curious: "عائشة",
+  skeptical: "عبدالله",
+  interrupter: "فهد",
+  supportive: "لولوة",
+};
 const wave = [];
 
 function pushWave(level) {
@@ -422,6 +433,7 @@ function showRoom(session) {
           </div>
           <div class="tools">
             <button class="mic" id="mic" type="button">مايك</button>
+            <button class="tool" id="quiet" type="button">صوت</button>
             <button class="tool" id="captions" type="button">النص</button>
           </div>
         </div>
@@ -437,7 +449,7 @@ function showRoom(session) {
     <button class="audience-row" data-index="${member.index}" data-role="${member.id}" type="button">
       <span class="mark"></span>
       <span class="avatar-dot" style="background:${member.color}"></span>
-      <span>${member.name}</span>
+      <span class="who"><b>${member.name}</b><small>${VOICE_NAMES[member.id] || ""}</small></span>
     </button>
   `).join("");
   const showBeat = (beat) => {
@@ -449,15 +461,35 @@ function showRoom(session) {
       row.classList.toggle("active", Number(row.dataset.index) === beat.index);
     });
     setStance(beat.role, beat.mood, beat.line);
+    const row = document.querySelector(`.audience-row[data-index="${beat.index}"]`);
+    if (row && beat.line) row.dataset.line = beat.line;
     speakLine(beat.role, beat.line);
     if (!offerFloor(beat.line, beat.mood, 8) && tip) {
       tip.textContent = `${beat.name} دخل الحديث. ارجع للمايك عندما تجهز.`;
     }
   };
   list.querySelectorAll(".audience-row").forEach((row) => {
-    row.onclick = () => showBeat(SpeakingRoom.address(Number(row.dataset.index)));
+    row.onclick = () => {
+      const index = Number(row.dataset.index);
+      if (row.dataset.line && SpeakingRoom.replay) {
+        const beat = SpeakingRoom.replay(index) || {
+          index: index,
+          role: row.dataset.role,
+          name: row.querySelector("b").textContent,
+          line: row.dataset.line,
+          mood: "nod",
+        };
+        showBeat(beat);
+        return;
+      }
+      showBeat(SpeakingRoom.address(index));
+    };
   });
   canvas.addEventListener("audience", (event) => showBeat(event.detail));
+  canvas.addEventListener("murmur", (event) => {
+    const detail = event.detail || {};
+    setTimeout(() => speakMurmur(detail.line), 700);
+  });
 
   let remaining = minutes * 60;
   const total = remaining;
@@ -486,6 +518,16 @@ function showRoom(session) {
   document.querySelector("#captions").onclick = () => {
     document.querySelector("#transcript").classList.toggle("hidden");
   };
+  document.querySelector("#quiet").onclick = () => {
+    voiceQuiet = !voiceQuiet;
+    const button = document.querySelector("#quiet");
+    button.classList.toggle("live", voiceQuiet);
+    button.textContent = voiceQuiet ? "صامت" : "صوت";
+    if (window.SpeakingRoom && SpeakingRoom.mute) SpeakingRoom.mute(voiceQuiet);
+    if (voiceQuiet) stopVoice();
+    const caption = document.querySelector("#caption");
+    if (caption) caption.textContent = voiceQuiet ? "القاعة صامتة. الكتابة تبقى." : "الصوت راجع.";
+  };
   document.querySelector("#leave").onclick = () => finishLevel();
   if (session.opening) {
     const heard = document.querySelector("#heard");
@@ -500,6 +542,8 @@ function showRoom(session) {
       SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood);
       setStance(session.opening.role, session.opening.mood, session.opening.line);
       speakLine(session.opening.role, session.opening.line);
+      const openingRow = document.querySelector(`.audience-row[data-role="${session.opening.role}"]`);
+      if (openingRow) openingRow.dataset.line = session.opening.line;
       offerFloor(session.opening.line, session.opening.mood, session.level.level >= 2 ? 12 : 9);
     }, 2200);
   }
@@ -535,13 +579,15 @@ function unlockVoice() {
 
 function stopVoice() {
   voiceJob += 1;
-  if (!voicePlayer) return;
-  voicePlayer.pause();
+  murmurJob += 1;
+  if (voicePlayer) voicePlayer.pause();
+  if (murmurPlayer) murmurPlayer.pause();
+  if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("", false);
 }
 
 async function speakLine(role, line) {
   const text = (line || "").trim();
-  if (!text || !token) return;
+  if (!text || !token || voiceQuiet) return;
   const job = ++voiceJob;
   if (!voicePlayer) voicePlayer = new Audio();
   try {
@@ -557,11 +603,46 @@ async function speakLine(role, line) {
     const blob = await response.blob();
     if (job !== voiceJob || !blob.size) return;
     const url = URL.createObjectURL(blob);
-    voicePlayer.onended = () => URL.revokeObjectURL(url);
+    voicePlayer.onended = () => {
+      URL.revokeObjectURL(url);
+      if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk(role, false);
+    };
     voicePlayer.src = url;
     await voicePlayer.play();
+    if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk(role, true);
   } catch (err) {
     // The written line stays when the voice is quiet.
+  }
+}
+
+async function speakMurmur(line) {
+  const text = (line || "").trim();
+  if (!text || !token || voiceQuiet) return;
+  const job = ++murmurJob;
+  if (!murmurPlayer) murmurPlayer = new Audio();
+  murmurPlayer.volume = 0.4;
+  try {
+    const response = await fetch("/api/say", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ line: text.slice(0, 200), role: "crowd" }),
+    });
+    if (job !== murmurJob || !response.ok) return;
+    const blob = await response.blob();
+    if (job !== murmurJob || !blob.size) return;
+    const url = URL.createObjectURL(blob);
+    murmurPlayer.onended = () => {
+      URL.revokeObjectURL(url);
+      if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("crowd", false);
+    };
+    murmurPlayer.src = url;
+    await murmurPlayer.play();
+    if (window.SpeakingRoom && SpeakingRoom.talk) SpeakingRoom.talk("crowd", true);
+  } catch (err) {
+    // The judge's line stays the main voice.
   }
 }
 
@@ -751,6 +832,10 @@ async function sendChunk(sessionId, parts, sampleRate) {
   }
   const speaker = SpeakingRoom.react(data.role, data.line, data.mood);
   setStance(data.role, data.mood, data.line);
+  if (speaker >= 0 && data.line) {
+    const row = document.querySelector(`.audience-row[data-index="${speaker}"]`);
+    if (row) row.dataset.line = data.line;
+  }
   if (data.transcript) SpeakingRoom.pinTopic(data.transcript);
   const asking = offerFloor(data.line, data.mood, data.reply_seconds || 8);
   speakLine(data.role, data.line);
