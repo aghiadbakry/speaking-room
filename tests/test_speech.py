@@ -184,6 +184,41 @@ class SpeechRules(unittest.TestCase):
         self.assertEqual(calls["model"], "whisper-large-v3")
         self.assertIsNone(calls["prompt"])
 
+    def test_saudi_speech_runs_only_on_render(self):
+        from server.speech import speak_line
+
+        self.assertIsNone(speak_line("وش موضوع عرضك؟", "interested"))
+        os.environ["RENDER"] = "true"
+        os.environ["GROQ_API_KEY"] = "test-key"
+        calls = {}
+
+        class Response:
+            status_code = 200
+            content = b"RIFF"
+
+        def fake_post(url, **kwargs):
+            calls["url"] = url
+            calls["json"] = kwargs["json"]
+            return Response()
+
+        import httpx
+
+        original = httpx.post
+        httpx.post = fake_post
+        try:
+            audio = speak_line("وش موضوع عرضك؟", "skeptical")
+            silent = speak_line("  ", "skeptical")
+        finally:
+            httpx.post = original
+            os.environ.pop("RENDER", None)
+            os.environ.pop("GROQ_API_KEY", None)
+        self.assertEqual(audio, b"RIFF")
+        self.assertIsNone(silent)
+        self.assertIn("audio/speech", calls["url"])
+        self.assertEqual(calls["json"]["model"], "canopylabs/orpheus-arabic-saudi")
+        self.assertEqual(calls["json"]["voice"], "abdullah")
+        self.assertEqual(calls["json"]["input"], "وش موضوع عرضك؟")
+
     def test_judgement_reads_the_score_and_the_sentence(self):
         parsed = _parse_judgement("0.4\nرتّب الفكرة ثم المثال.")
         self.assertEqual(parsed["organization"], 0.4)
@@ -248,9 +283,9 @@ class SpeechRules(unittest.TestCase):
 
         discussion = opening_for("Graduation-project discussion")
         interview = opening_for("Job interview")
-        self.assertEqual(discussion["line"], "ما موضوع مشروع التخرج؟")
-        self.assertEqual(interview["line"], "ما الوظيفة التي تتقدم لها؟")
-        self.assertEqual(opening_for("A short presentation")["line"], "ما موضوع عرضك؟")
+        self.assertEqual(discussion["line"], "وش موضوع مشروع تخرجك؟")
+        self.assertEqual(interview["line"], "وش الوظيفة اللي مقدم عليها؟")
+        self.assertEqual(opening_for("A short presentation")["line"], "وش موضوع عرضك؟")
         self.assertIsNone(opening_for("Unknown task"))
 
     def test_level_three_asks_about_the_answer_and_waits(self):
@@ -331,7 +366,7 @@ class SpeechRules(unittest.TestCase):
             speech._ask_groq = original
             os.environ.pop("RENDER", None)
             os.environ.pop("GROQ_API_KEY", None)
-        self.assertEqual(action["line"], "ما الخطوة التالية في هذا العمل؟")
+        self.assertEqual(action["line"], "وش الخطوة الجاية في الشغل؟")
         self.assertEqual(action["role"], "curious")
 
     def test_the_same_judge_follows_the_answer_to_their_question(self):

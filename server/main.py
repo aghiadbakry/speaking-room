@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from server.auth import _public, login, logout, register, user_from_token
 from server.db import connect, init_db
 from server.levels import levels_for
 from server.practice import finish_session, start_session, take_turn
+from server.speech import speak_line
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / "client"
@@ -45,6 +46,11 @@ class AvatarIn(BaseModel):
 
 class StartIn(BaseModel):
     level: int
+
+
+class SayIn(BaseModel):
+    line: str
+    role: str = ""
 
 
 class ProfileIn(BaseModel):
@@ -141,6 +147,13 @@ def create_app(db_path: str) -> FastAPI:
         if error:
             raise HTTPException(status_code=404, detail=error)
         return payload
+
+    @app.post("/api/say")
+    def say_line(body: SayIn, user: dict = Depends(current_user)):
+        audio = speak_line(body.line, body.role)
+        if not audio:
+            return Response(status_code=204)
+        return Response(content=audio, media_type="audio/wav")
 
     @app.post("/api/sessions/{session_id}/finish")
     def close_session(session_id: int, user: dict = Depends(current_user)):

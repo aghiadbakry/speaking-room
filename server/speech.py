@@ -394,6 +394,36 @@ def _ask_groq(prompt, first_line_only):
     return text[:800]
 
 
+def speak_line(text, role):
+    """Saudi speech for one judge line. Local Chapter 3 stays silent."""
+    if not render_api():
+        return None
+    line = (text or "").strip()
+    if not line:
+        return None
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    voice = VOICES.get(role or "", "abdullah")
+    try:
+        import httpx
+
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/audio/speech",
+            headers={"Authorization": "Bearer %s" % key},
+            json={
+                "model": "canopylabs/orpheus-arabic-saudi",
+                "input": line[:200],
+                "voice": voice,
+                "response_format": "wav",
+            },
+            timeout=12,
+        )
+    except Exception:
+        return None
+    if response.status_code != 200 or not response.content:
+        return None
+    return response.content
+
+
 def _qwen(prompt):
     if os.environ.get("RENDER", "").strip().lower() == "true":
         return _ask_groq(prompt, first_line_only=True)
@@ -523,12 +553,12 @@ def judge_session(transcript):
 def opening_for(task):
     """Each task starts with one question, then the speaker answers."""
     table = {
-        "A short class talk": ("interested", "ما موضوع حديثك؟"),
-        "A short presentation": ("interested", "ما موضوع عرضك؟"),
-        "Explain a school project": ("curious", "ما المشروع الذي ستشرحه؟"),
-        "Graduation-project discussion": ("curious", "ما موضوع مشروع التخرج؟"),
-        "Present to the class": ("interested", "ما موضوع عرضك أمام الفصل؟"),
-        "Job interview": ("skeptical", "ما الوظيفة التي تتقدم لها؟"),
+        "A short class talk": ("interested", "وش موضوع حديثك؟"),
+        "A short presentation": ("interested", "وش موضوع عرضك؟"),
+        "Explain a school project": ("curious", "وش المشروع اللي بتشرحه؟"),
+        "Graduation-project discussion": ("curious", "وش موضوع مشروع تخرجك؟"),
+        "Present to the class": ("interested", "وش موضوع عرضك قدام الفصل؟"),
+        "Job interview": ("skeptical", "وش الوظيفة اللي مقدم عليها؟"),
     }
     found = table.get(task)
     if not found:
@@ -537,8 +567,18 @@ def opening_for(task):
 
 
 FOLLOW_UP = {
-    2: ["ما الخطوة التالية في هذا العمل؟", "ما الصعوبة التي واجهتها فيه؟"],
-    3: ["لماذا يناسبك هذا العمل؟", "ما الخبرة الأقرب إلى ما ذكرته؟"],
+    2: ["وش الخطوة الجاية في الشغل؟", "وش الصعوبة اللي واجهتها؟"],
+    3: ["ليش الشغل هذا يناسبك؟", "وش أقرب خبرة عندك؟"],
+}
+
+VOICES = {
+    "interested": "noura",
+    "uninterested": "sultan",
+    "curious": "aisha",
+    "skeptical": "abdullah",
+    "interrupter": "fahad",
+    "supportive": "lulwa",
+    "crowd": "noura",
 }
 
 
@@ -559,7 +599,11 @@ def _audience_line(role, transcript, intent, recent, features, level=1, waiting=
         return ""
 
     def ask(prompt):
-        return _ask_groq(_topic_clause(topic) + prompt, first_line_only=True)
+        dialect = (
+            "اكتب الجملة بلهجة سعودية بيضاء، مثل كلام الرياض: وش، تبي، هذي، خلاص. "
+            "لا فصحى رسمية ولا لهجة بلد آخر.\n"
+        )
+        return _ask_groq(_topic_clause(topic) + dialect + prompt, first_line_only=True)
     voices = {
         "interested": "مستمع مهتم. إذا كانت الجملة واضحة، سمِّ الفكرة وقل إنها واضحة ثم اطلب النقطة التالية.",
         "uninterested": "مستمع يريد خلاصة الفكرة التي قيلت، باسمها.",
@@ -701,7 +745,7 @@ def adapt_audience(features, level, asked, transcript="", recent=None, history=N
         result["line"] = spoken
     elif waiting and render_api():
         result["role"] = resolve_role(waiting["role"], level)
-        result["line"] = "لسه عندي سؤال. وضّحها بمثال صغير؟"
+        result["line"] = "لسه عندي سؤال. وضّحها بمثال بسيط؟"
     elif int(level) >= 2 and render_api():
         bank = FOLLOW_UP[int(level)]
         choice = bank[int(asked) % len(bank)]

@@ -311,11 +311,16 @@ async function showHome() {
     </section>`, { avatar: user.avatar, wide: true });
   document.querySelector("#edit").onclick = () => showSetup();
   document.querySelectorAll(".start-level").forEach((button) => {
-    button.onclick = () => enterLevel(Number(button.dataset.level), tasks);
+    button.onclick = () => {
+      unlockVoice();
+      enterLevel(Number(button.dataset.level), tasks);
+    };
   });
 }
 
 let micState = null;
+let voicePlayer = null;
+let voiceJob = 0;
 const wave = [];
 
 function pushWave(level) {
@@ -444,6 +449,7 @@ function showRoom(session) {
       row.classList.toggle("active", Number(row.dataset.index) === beat.index);
     });
     setStance(beat.role, beat.mood, beat.line);
+    speakLine(beat.role, beat.line);
     if (!offerFloor(beat.line, beat.mood, 8) && tip) {
       tip.textContent = `${beat.name} دخل الحديث. ارجع للمايك عندما تجهز.`;
     }
@@ -493,6 +499,7 @@ function showRoom(session) {
     setTimeout(() => {
       SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood);
       setStance(session.opening.role, session.opening.mood, session.opening.line);
+      speakLine(session.opening.role, session.opening.line);
       offerFloor(session.opening.line, session.opening.mood, session.level.level >= 2 ? 12 : 9);
     }, 2200);
   }
@@ -503,6 +510,7 @@ function showRoom(session) {
     closing = true;
     clearInterval(timer);
     stopMic();
+    stopVoice();
     let result = { turns: 0, confidence: 0, report: null, level: session.level.level };
     try {
       result = await api(`/api/sessions/${session.session_id}/finish`, { method: "POST" });
@@ -515,6 +523,45 @@ function showRoom(session) {
     SpeakingRoom.close();
     document.body.classList.remove("in-room");
     showResult(result, session);
+  }
+}
+
+function unlockVoice() {
+  if (!voicePlayer) voicePlayer = new Audio();
+  voicePlayer.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  const pending = voicePlayer.play();
+  if (pending) pending.catch(() => {});
+}
+
+function stopVoice() {
+  voiceJob += 1;
+  if (!voicePlayer) return;
+  voicePlayer.pause();
+}
+
+async function speakLine(role, line) {
+  const text = (line || "").trim();
+  if (!text || !token) return;
+  const job = ++voiceJob;
+  if (!voicePlayer) voicePlayer = new Audio();
+  try {
+    const response = await fetch("/api/say", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ line: text.slice(0, 200), role: role || "" }),
+    });
+    if (job !== voiceJob || !response.ok) return;
+    const blob = await response.blob();
+    if (job !== voiceJob || !blob.size) return;
+    const url = URL.createObjectURL(blob);
+    voicePlayer.onended = () => URL.revokeObjectURL(url);
+    voicePlayer.src = url;
+    await voicePlayer.play();
+  } catch (err) {
+    // The written line stays when the voice is quiet.
   }
 }
 
@@ -706,6 +753,7 @@ async function sendChunk(sessionId, parts, sampleRate) {
   setStance(data.role, data.mood, data.line);
   if (data.transcript) SpeakingRoom.pinTopic(data.transcript);
   const asking = offerFloor(data.line, data.mood, data.reply_seconds || 8);
+  speakLine(data.role, data.line);
   if (percent(data.confidence) >= 60) SpeakingRoom.cheer();
   if (heard) heard.textContent = data.line;
   if (tip && tips[data.role] && !asking) tip.textContent = tips[data.role];
