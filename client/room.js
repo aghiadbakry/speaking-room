@@ -24,6 +24,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     skeptical: ["لسه أفكر.", "أقنعني بهدوء."],
     interrupter: ["لحظة، أسمعك.", "خذها من هنا."],
     supportive: ["خذ راحتك.", "تمام، كمّل."],
+    crowd: ["نكمل نسمع.", "معكم من الخلف.", "واضح، كمّلوا."],
   };
   const ASIDE_MOOD = {
     interested: "clap",
@@ -382,14 +383,72 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     return group;
   }
 
+  function arrangement(level) {
+    if (level === 1) {
+      return {
+        camera: "presentation",
+        rows: [
+          { z: -1.7, y: 0, xs: [-2.45, -0.82, 0.82, 2.45], desk: 6.1, roles: true },
+          { z: -3.65, y: 0.42, xs: [-3.2, -1.6, 0, 1.6, 3.2], desk: 7.5, roles: false },
+        ],
+      };
+    }
+    if (level === 3) {
+      return {
+        camera: "interview",
+        rows: [
+          { z: -1.48, y: 0, xs: [-1.7, -0.55, 0.55, 1.7], desk: 4.6, roles: true },
+          { z: -2.85, y: 0, xs: [-0.85, 0.85], desk: 2.8, roles: true },
+        ],
+      };
+    }
+    return {
+      camera: "discussion",
+      rows: [
+        { z: -1.82, y: 0, xs: [-3.45, -2.1, -0.75, 0.75, 2.1, 3.45], desk: 8.1, roles: true, arc: 0.42 },
+      ],
+    };
+  }
+
+  function applyCamera(style) {
+    const shot = {
+      presentation: { from: [0.15, 2.2, 5.15], to: [0.1, 1.72, 3.45], lookFrom: [0, 1.4, -0.8], lookTo: [0, 1.28, -2.35] },
+      discussion: { from: [2.6, 2.1, 4.35], to: [0.55, 1.58, 2.85], lookFrom: [0, 1.3, -0.6], lookTo: [0, 1.12, -1.55] },
+      interview: { from: [1.15, 1.85, 3.35], to: [0.2, 1.5, 2.25], lookFrom: [0, 1.2, -0.2], lookTo: [0, 1.08, -1.15] },
+    }[style] || null;
+    if (!shot) return;
+    camFrom.set(shot.from[0], shot.from[1], shot.from[2]);
+    camTo.set(shot.to[0], shot.to[1], shot.to[2]);
+    lookFrom.set(shot.lookFrom[0], shot.lookFrom[1], shot.lookFrom[2]);
+    lookTo.set(shot.lookTo[0], shot.lookTo[1], shot.lookTo[2]);
+  }
+
   function placePeople(session) {
     const gen = generation;
-    const count = COUNTS[session.level.level] || 4;
-    const seats = count <= 4 ? [-3.15, -1.85, 1.85, 3.15] : [-3.7, -2.55, -1.7, 1.7, 2.55, 3.7];
-    const z = -2.05;
+    const plan = arrangement(session.level.level);
     people = [];
-    deskRow(z, count <= 4 ? 7.4 : 8.8);
-    for (let seat = 0; seat < count; seat += 1) scene.add(chair(seats[seat], z));
+    const seats = [];
+    let cursor = 0;
+    plan.rows.forEach((row) => {
+      if (row.y > 0) {
+        addMesh(
+          scene,
+          new THREE.BoxGeometry(row.desk + 0.7, row.y, 1.5),
+          wood(0x5c3b28),
+          0, row.y / 2, row.z + 0.08
+        );
+      }
+      deskRow(row.z, row.desk, row.y);
+      row.xs.forEach((x) => {
+        const z = row.z - (row.arc ? (Math.abs(x) / 3.5) * row.arc : 0);
+        const seat = chair(x, z);
+        seat.position.y = row.y;
+        scene.add(seat);
+        const role = row.roles ? ROLES[cursor] : null;
+        if (row.roles) cursor += 1;
+        seats.push({ x: x, z: z, y: row.y, role: role });
+      });
+    });
     loadLibrary().then((lib) => {
       if (gen !== generation || !scene) return;
       const avatar = Object.assign({ skin: "medium", hair: "tied", outfit: "navy", gender: "female" }, session.avatar || {});
@@ -403,27 +462,27 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         rotY: Math.PI,
         seated: false,
       }));
-      for (let seat = 0; seat < count; seat += 1) {
-        const role = ROLES[seat];
-        const actor = makeActor(lib[AUDIENCE_FILES[seat]], {
-          skin: SKIN_CYCLE[seat % SKIN_CYCLE.length],
-          x: seats[seat],
-          y: -0.16,
-          z: z,
+      seats.forEach((seat, index) => {
+        const role = seat.role;
+        const actor = makeActor(lib[AUDIENCE_FILES[index % AUDIENCE_FILES.length]], {
+          skin: SKIN_CYCLE[index % SKIN_CYCLE.length],
+          x: seat.x,
+          y: -0.16 + seat.y,
+          z: seat.z,
           rotY: 0,
           seated: true,
-          role: role.id,
-          name: role.name,
-          color: role.color,
+          role: role ? role.id : "crowd",
+          name: role ? role.name : "من الجمهور",
+          color: role ? role.color : 0x8d6b4a,
         });
         scene.add(actor);
         people.push(actor);
-      }
+      });
       const now = performance.now() / 1000;
       people.forEach((member, index) => {
         member.userData.reaction = {
           kind: index % 2 === 0 ? "nod" : "aside",
-          until: now + 0.8 + index * 0.16,
+          until: now + 0.8 + index * 0.12,
         };
       });
       if (pendingReact) {
@@ -539,6 +598,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       const role = member.userData.role;
       let kind = "nod";
       if (role === "uninterested") kind = "aside";
+      else if (role === "crowd") kind = mood === "clap" ? "clap" : "nod";
       else if (role === "interrupter") kind = "wave";
       else if (role === "skeptical" || role === "curious") kind = mood === "clap" ? "nod" : "lean";
       else if (mood === "lean" || mood === "aside") kind = "nod";
@@ -578,11 +638,12 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     return obj ? people.indexOf(obj) : -1;
   }
 
-  function deskRow(z, width) {
-    const top = addMesh(scene, new THREE.BoxGeometry(width, 0.08, 0.7), wood(0x6b442c), 0, 0.74, z + 0.55);
-    addMesh(scene, new THREE.BoxGeometry(width - 0.2, 0.08, 0.08), wood(0x4a301f), 0, 0.4, z + 0.82);
+  function deskRow(z, width, lift) {
+    const y = lift || 0;
+    const top = addMesh(scene, new THREE.BoxGeometry(width, 0.08, 0.7), wood(0x6b442c), 0, 0.74 + y, z + 0.55);
+    addMesh(scene, new THREE.BoxGeometry(width - 0.2, 0.08, 0.08), wood(0x4a301f), 0, 0.4 + y, z + 0.82);
     [-(width / 2) + 0.3, (width / 2) - 0.3].forEach((x) => {
-      addMesh(scene, new THREE.BoxGeometry(0.08, 0.7, 0.5), wood(0x4a301f), x, 0.36, z + 0.55);
+      addMesh(scene, new THREE.BoxGeometry(0.08, 0.7, 0.5), wood(0x4a301f), x, 0.36 + y, z + 0.55);
     });
     return top;
   }
@@ -598,6 +659,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       camera.lookAt(0, 1.15, -1.2);
       intro = 1;
     } else {
+      applyCamera(arrangement(session.level.level).camera);
       camera.position.copy(camFrom);
       camera.lookAt(lookFrom);
       intro = 0;
