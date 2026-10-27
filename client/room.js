@@ -453,11 +453,11 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       return {
         camera: "interview",
         shell: "office",
-        walk: 0.8,
-        speaker: { x: 0, y: 0, z: 0.95 },
+        walk: 0.45,
+        speaker: { x: 0, y: 0, z: 0.82 },
         speaking: ["skeptical", "curious", "interrupter"],
         rows: [
-          { z: -1.05, y: 0, xs: [-0.95, 0, 0.95], desk: 2.7, roles: true },
+          { z: -0.95, y: 0, xs: [-0.78, 0, 0.78], desk: 2.15, roles: true },
         ],
       };
     }
@@ -546,7 +546,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const shot = {
       presentation: { from: [0.15, 2.2, 5.15], to: [0.1, 1.72, 3.45], lookFrom: [0, 1.4, -0.8], lookTo: [0, 1.28, -2.35] },
       discussion: { from: [2.6, 2.1, 4.35], to: [0.55, 1.58, 2.85], lookFrom: [0, 1.3, -0.6], lookTo: [0, 1.12, -1.55] },
-      interview: { from: [1.15, 1.85, 3.35], to: [0.2, 1.5, 2.25], lookFrom: [0, 1.2, -0.2], lookTo: [0, 1.08, -1.15] },
+      interview: { from: [1.55, 1.72, 1.95], to: [0.72, 1.38, 1.35], lookFrom: [-0.15, 1.15, -0.15], lookTo: [0, 1.02, -0.55] },
     }[style] || null;
     if (!shot) return;
     camFrom.set(shot.from[0], shot.from[1], shot.from[2]);
@@ -559,7 +559,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const look = {
       presentation: { stage: 0xffc27a, stageI: 8.4, house: 0xffe0b0, houseI: 2.5, cool: 0.1, hemi: 0.58, exposure: 1.1, sun: 1.15, lamp: 0xffe2b0, lampI: 0.55 },
       discussion: { stage: 0xfff4e2, stageI: 6.2, house: 0xfff8ee, houseI: 3.8, cool: 0.18, hemi: 0.78, exposure: 1.16, sun: 1.45, lamp: 0xfff1d2, lampI: 0.72 },
-      interview: { stage: 0xffd7b0, stageI: 3.3, house: 0xc9d7ea, houseI: 1.05, cool: 0.48, hemi: 0.34, exposure: 0.9, sun: 0.72, lamp: 0xd5e2f4, lampI: 0.22 },
+      interview: { stage: 0xfff4e8, stageI: 2.4, house: 0xe4edf6, houseI: 2.6, cool: 0.22, hemi: 0.92, exposure: 1.08, sun: 0.55, lamp: 0xf7f1e4, lampI: 0.15 },
     }[style];
     if (!look) return;
     lightGoal = { stage: look.stageI, house: look.houseI, exposure: look.exposure };
@@ -1035,22 +1035,36 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       mesh.visible = !bare;
     });
     if (plan.shell !== "office") return;
-    scene.background = new THREE.Color(0x141b24);
-    scene.fog = new THREE.Fog(0x141b24, 5.5, 13);
-    const wall = new THREE.MeshStandardMaterial({ color: 0xd7dee6, roughness: 0.88 });
-    const trim = new THREE.MeshStandardMaterial({ color: 0x2c3a4a, roughness: 0.62 });
+    scene.background = new THREE.Color(0xd5dde6);
+    scene.fog = new THREE.Fog(0xd5dde6, 3.2, 8);
+    const wall = new THREE.MeshStandardMaterial({ color: 0xe7e1d6, roughness: 0.92 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x8d6848, roughness: 0.58 });
     const glass = new THREE.MeshStandardMaterial({
-      color: 0xb7d4e4,
-      roughness: 0.16,
-      emissive: 0x1d3a4a,
-      emissiveIntensity: 0.35,
+      color: 0xc5dcea,
+      roughness: 0.12,
+      emissive: 0x8fb4c8,
+      emissiveIntensity: 0.45,
     });
-    addMesh(scene, new THREE.BoxGeometry(6.6, 3.05, 0.1), wall, 0, 1.52, -2.85);
-    addMesh(scene, new THREE.BoxGeometry(0.1, 3.05, 7.4), wall, -3.3, 1.52, 0.45);
-    addMesh(scene, new THREE.BoxGeometry(0.1, 3.05, 7.4), wall, 3.3, 1.52, 0.45);
-    addMesh(scene, new THREE.BoxGeometry(6.6, 0.07, 0.1), trim, 0, 2.95, -2.8);
-    addMesh(scene, new THREE.BoxGeometry(0.04, 0.85, 1.25), glass, 3.22, 1.65, 0.2);
-    if (board) board.position.set(0, 1.95, -2.72);
+    const carpet = new THREE.MeshStandardMaterial({ color: 0x4e6270, roughness: 0.96 });
+    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0xf3efe6, roughness: 1 });
+    addMesh(scene, new THREE.BoxGeometry(4.3, 0.04, 4.15), carpet, 0, 0.03, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(4.5, 0.08, 4.35), ceilingMat, 0, 2.42, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(4.35, 2.4, 0.1), wall, 0, 1.2, -1.92);
+    addMesh(scene, new THREE.BoxGeometry(0.1, 2.4, 4.2), wall, -2.15, 1.2, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(0.1, 2.4, 4.2), wall, 2.15, 1.2, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(4.35, 0.08, 0.06), trim, 0, 0.1, -1.86);
+    addMesh(scene, new THREE.BoxGeometry(0.06, 0.08, 4.15), trim, -2.09, 0.1, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(0.06, 0.08, 4.15), trim, 2.09, 0.1, 0.15);
+    addMesh(scene, new THREE.BoxGeometry(0.04, 0.95, 1.35), glass, 2.08, 1.45, -0.35);
+    addMesh(scene, new THREE.BoxGeometry(0.7, 0.05, 0.7), ceilingMat, 0, 2.34, 0.15);
+    const shade = new THREE.PointLight(0xfff6e8, 0.7, 4.5, 2);
+    shade.position.set(0, 2.2, 0.15);
+    scene.add(shade);
+    if (board) {
+      board.position.set(-2.02, 1.45, 0.15);
+      board.rotation.y = Math.PI / 2;
+      board.scale.set(0.62, 0.62, 1);
+    }
   }
 
   function build(canvas, session) {
@@ -1059,6 +1073,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     scene.fog = new THREE.Fog(0x100e0c, 11, 22);
     camera = new THREE.PerspectiveCamera(48, canvas.clientWidth / Math.max(canvas.clientHeight, 1), 0.1, 40);
     const plan = arrangement(session);
+    if (plan.camera === "interview" && presentation !== "lobby") camera.fov = 58;
     stagePieces = [];
     if (presentation === "lobby") {
       camera.fov = 52;
