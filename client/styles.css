@@ -323,6 +323,12 @@ body.in-room #app { width: 100vw; height: 100vh; margin: 0; padding: 0; }
   border-radius: 10px;
 }
 .aside-hint { margin: 8px 0 0; color: rgba(243, 234, 223, 0.72); font-size: 13px; }
+.audience-row.with .mark { background: #e2b56a; box-shadow: 0 0 8px rgba(226, 181, 106, 0.85); }
+.audience-row.ask .mark { background: #c47a4a; }
+.mark {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: rgba(255, 255, 255, 0.22);
+}
 .audience-row.active {
   color: #fff8ec;
   background: rgba(226, 181, 106, 0.16);

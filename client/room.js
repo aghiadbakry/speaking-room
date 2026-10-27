@@ -68,6 +68,13 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   const pitchAxis = new THREE.Vector3(1, 0, 0);
   let stageLight = null;
   let houseLight = null;
+  let hemiLight = null;
+  let sunLight = null;
+  let coolLight = null;
+  let lamps = [];
+  let speaker = null;
+  let lightGoal = { stage: 7.2, house: 2.8, exposure: 1.08 };
+  let finaleUntil = 0;
   let entrance = 1;
   let pendingReact = null;
   let onCanvasClick = null;
@@ -323,13 +330,16 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     const mixer = new THREE.AnimationMixer(model);
     const idleClip = THREE.AnimationClip.findByName(gltf.animations, "Idle") || gltf.animations[0];
     const waveClip = THREE.AnimationClip.findByName(gltf.animations, "Wave");
+    const walkClip = THREE.AnimationClip.findByName(gltf.animations, "Walk");
     const idle = mixer.clipAction(idleClip);
     idle.play();
     const wave = waveClip ? mixer.clipAction(waveClip) : null;
+    const walkAction = walkClip ? mixer.clipAction(walkClip) : null;
     if (wave) {
       wave.setLoop(THREE.LoopOnce, 1);
       wave.clampWhenFinished = true;
     }
+    if (walkAction) walkAction.setLoop(THREE.LoopRepeat, Infinity);
     mixers.push(mixer);
     if (options.seated) {
       mixer.update(0);
@@ -369,6 +379,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       bones: bones,
       idle: idle,
       wave: wave,
+      walkAction: walkAction,
       waving: false,
       seated: !!options.seated,
       seatedPose: seatedPose,
@@ -423,6 +434,25 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     lookTo.set(shot.lookTo[0], shot.lookTo[1], shot.lookTo[2]);
   }
 
+  function paintLights(style) {
+    const look = {
+      presentation: { stage: 0xffc27a, stageI: 8.4, house: 0xffe0b0, houseI: 2.5, cool: 0.1, hemi: 0.58, exposure: 1.1, sun: 1.15, lamp: 0xffe2b0, lampI: 0.55 },
+      discussion: { stage: 0xfff4e2, stageI: 6.2, house: 0xfff8ee, houseI: 3.8, cool: 0.18, hemi: 0.78, exposure: 1.16, sun: 1.45, lamp: 0xfff1d2, lampI: 0.72 },
+      interview: { stage: 0xffd7b0, stageI: 3.3, house: 0xc9d7ea, houseI: 1.05, cool: 0.48, hemi: 0.34, exposure: 0.9, sun: 0.72, lamp: 0xd5e2f4, lampI: 0.22 },
+    }[style];
+    if (!look) return;
+    lightGoal = { stage: look.stageI, house: look.houseI, exposure: look.exposure };
+    if (stageLight) stageLight.color.setHex(look.stage);
+    if (houseLight) houseLight.color.setHex(look.house);
+    if (sunLight) sunLight.intensity = look.sun;
+    if (hemiLight) hemiLight.intensity = look.hemi;
+    if (coolLight) coolLight.intensity = look.cool;
+    lamps.forEach((bulb) => {
+      bulb.color.setHex(look.lamp);
+      bulb.intensity = look.lampI;
+    });
+  }
+
   function placePeople(session) {
     const gen = generation;
     const plan = arrangement(session.level.level);
@@ -452,7 +482,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     loadLibrary().then((lib) => {
       if (gen !== generation || !scene) return;
       const avatar = Object.assign({ skin: "medium", hair: "tied", outfit: "navy", gender: "female" }, session.avatar || {});
-      scene.add(makeActor(lib[speakerFile(avatar)], {
+      scene.add(speaker = makeActor(lib[speakerFile(avatar)], {
         skin: SKIN[avatar.skin] || SKIN.medium,
         hair: avatar.hair || "tied",
         outfit: avatar.outfit || "navy",
@@ -462,6 +492,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         rotY: Math.PI,
         seated: false,
       }));
+      if (presentation === "session") beginWalk(speaker);
       seats.forEach((seat, index) => {
         const role = seat.role;
         const actor = makeActor(lib[AUDIENCE_FILES[index % AUDIENCE_FILES.length]], {
@@ -566,6 +597,11 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       yawQuat.setFromAxisAngle(yawAxis, 0.72 * k);
       bones.Head.quaternion.multiply(yawQuat);
     }
+    if (react.kind === "quiet" && bones.Head && pose.Head) {
+      const yaw = Math.max(-0.7, Math.min(0.7, -(data.gaze || 0) * 0.22));
+      yawQuat.setFromAxisAngle(yawAxis, yaw);
+      bones.Head.quaternion.multiply(yawQuat);
+    }
   }
 
   function syncGesture(data) {
@@ -592,13 +628,66 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     };
   }
 
-  function echoRoom(except, mood) {
+  function beginWalk(group) {
+    const home = group.position.clone();
+    group.position.set(home.x, home.y, home.z + 1.75);
+    group.userData.walk = {
+      from: group.position.clone(),
+      to: home,
+      start: performance.now() / 1000,
+      span: 2.0,
+    };
+    if (group.userData.walkAction && group.userData.idle) {
+      group.userData.idle.fadeOut(0.1);
+      group.userData.walkAction.reset().fadeIn(0.1).play();
+    }
+  }
+
+  function faceSpeaker(member) {
+    if (!speaker || !member) return;
+    speaker.userData.lookAt = member.position.clone();
+  }
+
+  function stepSpeaker(time, delta) {
+    if (!speaker) return;
+    const data = speaker.userData;
+    if (data.walk) {
+      const t = Math.min(1, (time - data.walk.start) / data.walk.span);
+      speaker.position.lerpVectors(data.walk.from, data.walk.to, t);
+      if (t >= 1) {
+        data.walk = null;
+        if (data.walkAction) data.walkAction.fadeOut(0.2);
+        if (data.idle) data.idle.reset().fadeIn(0.2).play();
+      }
+      return;
+    }
+    if (!data.lookAt) return;
+    const dx = data.lookAt.x - speaker.position.x;
+    const dz = data.lookAt.z - speaker.position.z;
+    const target = Math.atan2(dx, dz);
+    let turn = target - speaker.rotation.y;
+    while (turn > Math.PI) turn -= Math.PI * 2;
+    while (turn < -Math.PI) turn += Math.PI * 2;
+    speaker.rotation.y += turn * Math.min(1, delta * 3.5);
+  }
+
+  function echoRoom(except, mood, line) {
     people.forEach((member) => {
       if (member === except || !member.userData.seated) return;
       const role = member.userData.role;
+      const asking = mood === "lean" || mood === "aside" || /[؟?]/.test(line || "");
+      if (role === "crowd") {
+        if (asking) {
+          member.userData.gaze = except ? except.position.x - member.position.x : 0;
+          beginReaction(member, "quiet", 1.7);
+        } else {
+          member.userData.gaze = 0;
+          beginReaction(member, "clap", 1.6);
+        }
+        return;
+      }
       let kind = "nod";
       if (role === "uninterested") kind = "aside";
-      else if (role === "crowd") kind = mood === "clap" ? "clap" : "nod";
       else if (role === "interrupter") kind = "wave";
       else if (role === "skeptical" || role === "curious") kind = mood === "clap" ? "nod" : "lean";
       else if (mood === "lean" || mood === "aside") kind = "nod";
@@ -617,7 +706,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     activeMember = member;
     const mood = ASIDE_MOOD[role] || "nod";
     beginReaction(member, mood, 1.7);
-    echoRoom(member, mood);
+    faceSpeaker(member);
+    echoRoom(member, mood, line);
     if (line) showComment(member, line);
     if (renderer && scene && camera) renderer.render(scene, camera);
     return { index: index, role: role, name: member.userData.name, line: line, mood: mood };
@@ -677,18 +767,18 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.xr.enabled = true;
 
-    scene.add(new THREE.HemisphereLight(0xfff4e5, 0x3a2a22, 0.48));
-    const sun = new THREE.DirectionalLight(0xfff1dd, 1.25);
-    sun.position.set(3.2, 6.4, 2.4);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 18;
-    sun.shadow.camera.left = -7;
-    sun.shadow.camera.right = 7;
-    sun.shadow.camera.top = 7;
-    sun.shadow.camera.bottom = -7;
-    scene.add(sun);
+    scene.add(hemiLight = new THREE.HemisphereLight(0xfff4e5, 0x3a2a22, 0.48));
+    sunLight = new THREE.DirectionalLight(0xfff1dd, 1.25);
+    sunLight.position.set(3.2, 6.4, 2.4);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(1024, 1024);
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 18;
+    sunLight.shadow.camera.left = -7;
+    sunLight.shadow.camera.right = 7;
+    sunLight.shadow.camera.top = 7;
+    sunLight.shadow.camera.bottom = -7;
+    scene.add(sunLight);
     stageLight = new THREE.SpotLight(0xffe2b8, presentation === "lobby" ? 7 : 1.4, 14, 0.62, 0.4, 1);
     stageLight.position.set(0, 3.7, 2.2);
     stageLight.target.position.set(0, 1.05, -0.4);
@@ -701,9 +791,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     house.target.position.set(0, 0.9, -1.8);
     scene.add(house);
     scene.add(house.target);
-    const cool = new THREE.DirectionalLight(0x9ecfff, 0.28);
-    cool.position.set(6, 3.2, 0.4);
-    scene.add(cool);
+    coolLight = new THREE.DirectionalLight(0x9ecfff, 0.28);
+    coolLight.position.set(6, 3.2, 0.4);
+    scene.add(coolLight);
 
     const floor = addMesh(
       scene,
@@ -738,6 +828,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       lamp.castShadow = false;
       const bulb = new THREE.PointLight(0xffe2b0, 0.45, 7, 2);
       bulb.position.set(x, 3.65, -1.5);
+      lamps.push(bulb);
       scene.add(bulb);
     });
     [-2.4, 2.4].forEach((z) => {
@@ -786,6 +877,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       0, 2.35, -6.48
     );
     screen.castShadow = false;
+    if (presentation === "session") paintLights(arrangement(session.level.level).camera);
 
     placePeople(session);
   }
@@ -842,8 +934,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     tick.last = now;
     const time = now / 1000;
     mixers.forEach((mixer) => mixer.update(delta));
+    stepSpeaker(time, delta);
     people.forEach((member) => applyPose(member, time));
-    if (presentation === "session" && entrance >= 1 && time - (tick.glance || 0) > 3.4) {
+    if (presentation === "session" && entrance >= 1 && time >= finaleUntil && time - (tick.glance || 0) > 3.4) {
       tick.glance = time;
       const quiet = people.filter((member) => member.userData.seated && member !== activeMember && !member.userData.reaction);
       if (quiet.length) {
@@ -870,9 +963,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       intro = Math.min(1, intro + 0.007);
       if (entrance < 1) {
         entrance = Math.min(1, entrance + delta * 0.42);
-        if (stageLight) stageLight.intensity = 1.4 + entrance * 5.8;
-        if (houseLight) houseLight.intensity = 0.7 + entrance * 2.1;
-        renderer.toneMappingExposure = 0.74 + entrance * 0.34;
+        if (stageLight) stageLight.intensity = 1.1 + entrance * (lightGoal.stage - 1.1);
+        if (houseLight) houseLight.intensity = 0.45 + entrance * (lightGoal.house - 0.45);
+        renderer.toneMappingExposure = 0.7 + entrance * (lightGoal.exposure - 0.7);
       }
       const ease = 1 - Math.pow(1 - intro, 3);
       camera.position.lerpVectors(camFrom, camTo, ease);
@@ -962,10 +1055,20 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       }
       pendingReact = null;
       beginReaction(activeMember, mood || "nod", 1.8);
-      echoRoom(activeMember, mood || "nod");
+      faceSpeaker(activeMember);
+      echoRoom(activeMember, mood || "nod", line);
       if (line) showComment(activeMember, line);
       if (renderer && scene && camera) renderer.render(scene, camera);
       return people.indexOf(activeMember);
+    },
+    finale: function (won) {
+      finaleUntil = performance.now() / 1000 + 3.2;
+      people.forEach((member) => {
+        if (!member.userData.seated) return;
+        if (won) beginReaction(member, member.userData.role === "uninterested" ? "nod" : "clap", 2.8);
+        else beginReaction(member, "quiet", 2.5);
+      });
+      if (speaker) speaker.userData.lookAt = new THREE.Vector3(0, 1.1, -2.2);
     },
     async enterHeadset() {
       if (!navigator.xr || !renderer) return false;
@@ -996,6 +1099,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       onCanvasClick = null;
       people = [];
       pendingReact = null;
+      speaker = null;
+      lamps = [];
+      finaleUntil = 0;
       scene = null;
     },
   };

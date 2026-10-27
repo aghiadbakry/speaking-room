@@ -429,7 +429,8 @@ function showRoom(session) {
   const count = document.querySelector("#audience-count");
   if (count) count.textContent = `(${members.length})`;
   list.innerHTML = members.map((member) => `
-    <button class="audience-row" data-index="${member.index}" type="button">
+    <button class="audience-row" data-index="${member.index}" data-role="${member.id}" type="button">
+      <span class="mark"></span>
       <span class="avatar-dot" style="background:${member.color}"></span>
       <span>${member.name}</span>
     </button>
@@ -443,6 +444,7 @@ function showRoom(session) {
     document.querySelectorAll(".audience-row").forEach((row) => {
       row.classList.toggle("active", Number(row.dataset.index) === beat.index);
     });
+    setStance(beat.role, beat.mood, beat.line);
   };
   list.querySelectorAll(".audience-row").forEach((row) => {
     row.onclick = () => showBeat(SpeakingRoom.address(Number(row.dataset.index)));
@@ -481,10 +483,16 @@ function showRoom(session) {
         ? "الجولة بدأت بسؤال. أجب، ثم خذ وقتك."
         : "اذكر موضوعك، ثم ابدأ العرض كأن القاعة معك.";
     }
-    setTimeout(() => SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood), 2200);
+    setTimeout(() => {
+      SpeakingRoom.react(session.opening.role, session.opening.line, session.opening.mood);
+      setStance(session.opening.role, session.opening.mood, session.opening.line);
+    }, 2200);
   }
 
+  let closing = false;
   async function finishLevel() {
+    if (closing) return;
+    closing = true;
     clearInterval(timer);
     stopMic();
     let result = { turns: 0, confidence: 0, report: null, level: session.level.level };
@@ -493,10 +501,24 @@ function showRoom(session) {
     } catch (err) {
       result.error = err.message;
     }
+    const won = result.turns && (result.confidence || 0) >= 60;
+    if (window.SpeakingRoom && SpeakingRoom.finale) SpeakingRoom.finale(!!won);
+    await new Promise((resolve) => setTimeout(resolve, 2600));
     SpeakingRoom.close();
     document.body.classList.remove("in-room");
     showResult(result, session);
   }
+}
+
+function setStance(role, mood, line) {
+  if (!role || role === "crowd") return;
+  const asking = /[؟?]/.test(line || "") || mood === "lean" || mood === "aside";
+  const state = asking ? "ask" : "with";
+  document.querySelectorAll(".audience-row").forEach((row) => {
+    if (row.dataset.role !== role) return;
+    row.classList.remove("with", "ask");
+    row.classList.add(state);
+  });
 }
 
 function curtainCall(result) {
@@ -660,6 +682,7 @@ async function sendChunk(sessionId, parts, sampleRate) {
     return;
   }
   const speaker = SpeakingRoom.react(data.role, data.line, data.mood);
+  setStance(data.role, data.mood, data.line);
   if (heard) heard.textContent = data.line;
   if (tip && tips[data.role]) tip.textContent = tips[data.role];
   const stress = document.querySelector("#stress-bar");
