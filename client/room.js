@@ -671,7 +671,6 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     while (turn < -Math.PI) turn += Math.PI * 2;
     data.yaw += turn * amount;
     speaker.rotation.y = data.yaw;
-    if (renderer) renderer.domElement.dataset.pose = data.yaw.toFixed(2);
   }
 
   function stepSpeaker(time, delta) {
