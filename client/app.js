@@ -407,7 +407,7 @@ function showRoom(session) {
             <span>${aim}</span>
           </div>
           <div class="view-actions">
-            <button class="ghost" id="holder" type="button">الحامل</button>
+            <button class="ghost" id="holder" type="button">المنظار</button>
             <button class="ghost" id="headset" type="button">النظارة</button>
           </div>
         </div>
@@ -525,7 +525,7 @@ function showRoom(session) {
   };
   const holderButton = document.querySelector("#holder");
   const markHolder = (on) => {
-    holderButton.textContent = on ? "إغلاق" : "الحامل";
+    holderButton.textContent = on ? "إغلاق" : "المنظار";
     holderButton.classList.toggle("live", on);
   };
   holderButton.onclick = async () => {
@@ -534,11 +534,11 @@ function showRoom(session) {
       SpeakingRoom.exitHolder();
       return;
     }
-    if (caption) caption.textContent = "أدر الجوال بالعرض، ثم ضعه في الحامل. زر الريموت يشغّل المايك.";
+    if (caption) caption.textContent = "أدر الجوال بالعرض، ثم ضعه في المنظار. زر الريموت يشغّل المايك.";
     const entered = await SpeakingRoom.enterHolder();
     if (!entered) {
       markHolder(false);
-      if (caption) caption.textContent = "اسمح بمستشعرات الحركة، ثم أعد الضغط على الحامل.";
+      if (caption) caption.textContent = "اسمح بمستشعرات الحركة، ثم أعد الضغط على المنظار.";
       return;
     }
     markHolder(true);
