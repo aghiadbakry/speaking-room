@@ -70,6 +70,10 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   const camTo = new THREE.Vector3(0.95, 1.62, 3.05);
   const lookFrom = new THREE.Vector3(0.2, 1.4, -0.6);
   const lookTo = new THREE.Vector3(-0.2, 1.15, -1.55);
+  const speakerHome = new THREE.Vector3(0, 0.24, 0.72);
+  const holderEye = new THREE.Vector3();
+  const holderLook = new THREE.Vector3();
+  const holderForward = new THREE.Vector3();
   const lookNow = new THREE.Vector3();
   let intro = 1;
   let generation = 0;
@@ -623,6 +627,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       if (gen !== generation || !scene) return;
       const avatar = Object.assign({ skin: "medium", hair: "tied", outfit: "navy", gender: "female" }, session.avatar || {});
       const home = plan.speaker || { x: 0, y: 0.24, z: 0.72 };
+      speakerHome.set(home.x, home.y, home.z);
       scene.add(speaker = makeActor(lib[speakerFile(avatar)], {
         skin: SKIN[avatar.skin] || SKIN.medium,
         hair: avatar.hair || "tied",
@@ -665,6 +670,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
           beginReaction(activeMember, "yield", 2.2);
         }
       }
+      if (phoneMode) captureHolderView();
       paint();
     }).catch((err) => {
       console.error(err);
@@ -1308,9 +1314,9 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   function onPhoneOrientation(event) {
     if (!phoneMode || !readPhoneOrientation(event)) return;
     if (phoneReady) return;
-    camera.position.copy(camTo);
+    camera.position.copy(holderEye);
     camera.up.set(0, 1, 0);
-    camera.lookAt(lookTo);
+    camera.lookAt(holderLook);
     phoneOffset.copy(camera.quaternion).multiply(phoneQuat.clone().invert());
     phoneReady = true;
   }
@@ -1367,11 +1373,45 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     phonePad.back = state.back;
   }
 
+  function holderView() {
+    if (speaker) {
+      const head = speaker.userData.bones && speaker.userData.bones.Head;
+      if (head) {
+        speaker.updateWorldMatrix(true, true);
+        head.getWorldPosition(holderEye);
+        holderEye.y += 0.08;
+      } else {
+        speaker.getWorldPosition(holderEye);
+        holderEye.y += 1.5;
+      }
+      holderForward.set(0, 0, 1).applyQuaternion(speaker.quaternion);
+      holderLook.copy(holderEye).addScaledVector(holderForward, 2.4);
+      return;
+    }
+    holderEye.set(speakerHome.x, speakerHome.y + 1.55, speakerHome.z);
+    holderLook.set(speakerHome.x, speakerHome.y + 1.45, speakerHome.z - 2.4);
+  }
+
+  function captureHolderView() {
+    if (speaker && speaker.userData.walk) {
+      const data = speaker.userData;
+      speaker.position.copy(data.walk.to);
+      data.walk = null;
+      if (data.walkAction) data.walkAction.stop();
+      if (data.idle) data.idle.reset().fadeIn(0.1).play();
+    }
+    holderView();
+    if (speaker) speaker.visible = false;
+    camera.position.copy(holderEye);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(holderLook);
+  }
+
   function applyPhoneLook() {
-    camera.position.copy(camTo);
+    camera.position.copy(holderEye);
     if (!phoneReady) {
       camera.up.set(0, 1, 0);
-      camera.lookAt(lookTo);
+      camera.lookAt(holderLook);
       return;
     }
     camera.quaternion.copy(phoneOffset).multiply(phoneQuat);
@@ -1434,10 +1474,8 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     phoneMode = true;
     phoneReady = false;
     intro = 1;
-    camera.focus = 3;
-    camera.position.copy(camTo);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(lookTo);
+    camera.focus = 2.4;
+    captureHolderView();
     if (!phoneStereo) {
       phoneStereo = new THREE.StereoCamera();
       phoneStereo.cameraL.matrixWorldAutoUpdate = false;
@@ -1480,6 +1518,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     if (!phoneMode) return;
     phoneMode = false;
     phoneReady = false;
+    if (speaker) speaker.visible = true;
     window.removeEventListener("deviceorientation", onPhoneOrientation);
     window.removeEventListener("keydown", onHolderKey);
     document.removeEventListener("fullscreenchange", onFullscreenEnd);
