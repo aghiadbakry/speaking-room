@@ -406,7 +406,10 @@ function showRoom(session) {
             <strong>مستوى ${session.level.level} — ${session.level.task_ar}</strong>
             <span>${aim}</span>
           </div>
-          <button class="ghost" id="headset" type="button">النظارة</button>
+          <div class="view-actions">
+            <button class="ghost" id="holder" type="button">الحامل</button>
+            <button class="ghost" id="headset" type="button">النظارة</button>
+          </div>
         </div>
         <aside class="panel side-left">
           <div class="timer-card">
@@ -520,6 +523,35 @@ function showRoom(session) {
     const tip = document.querySelector("#tip");
     if (!entered && tip) tip.textContent = "النظارة غير متصلة. المشهد مستمر على الشاشة.";
   };
+  const holderButton = document.querySelector("#holder");
+  const markHolder = (on) => {
+    holderButton.textContent = on ? "إغلاق" : "الحامل";
+    holderButton.classList.toggle("live", on);
+  };
+  holderButton.onclick = async () => {
+    const caption = document.querySelector("#caption");
+    if (SpeakingRoom.inHolder && SpeakingRoom.inHolder()) {
+      SpeakingRoom.exitHolder();
+      return;
+    }
+    if (caption) caption.textContent = "أدر الجوال بالعرض، ثم ضعه في الحامل. زر الريموت يشغّل المايك.";
+    const entered = await SpeakingRoom.enterHolder();
+    if (!entered) {
+      markHolder(false);
+      if (caption) caption.textContent = "اسمح بمستشعرات الحركة، ثم أعد الضغط على الحامل.";
+      return;
+    }
+    markHolder(true);
+  };
+  canvas.addEventListener("holder", (event) => {
+    const caption = document.querySelector("#caption");
+    if (event.detail.action === "exit") {
+      markHolder(false);
+      if (caption) caption.textContent = "المشهد رجع على الشاشة.";
+      return;
+    }
+    if (event.detail.action === "click") toggleMic(session.session_id, session.level.level);
+  });
   document.querySelector("#mic").onclick = () => toggleMic(session.session_id, session.level.level);
   document.querySelector("#captions").onclick = () => {
     document.querySelector("#transcript").classList.toggle("hidden");

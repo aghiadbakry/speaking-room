@@ -384,6 +384,26 @@ body.in-room #app { width: 100vw; height: 100vh; margin: 0; padding: 0; }
   backdrop-filter: blur(10px);
 }
 .ghost.end { background: rgba(36, 24, 20, 0.72); }
+.ghost.live {
+  background: rgba(226, 181, 106, 0.28);
+  border-color: rgba(226, 181, 106, 0.75);
+}
+.view-actions { display: flex; gap: 8px; align-items: center; }
+body.holder .title-pill,
+body.holder #headset,
+body.holder #leave,
+body.holder .side-left,
+body.holder .side-right,
+body.holder .corner,
+body.holder .dock,
+body.holder .hud::before { display: none; }
+body.holder .view-actions {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+}
 
 @media (max-width: 900px) {
   .side-left, .side-right { width: 168px; }
@@ -393,4 +413,9 @@ body.in-room #app { width: 100vw; height: 100vh; margin: 0; padding: 0; }
 @media (max-width: 720px) {
   .corner { display: none; }
   .side-right { display: none; }
+  .title-pill { max-width: 42vw; padding: 6px 10px; }
+  .title-pill strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title-pill span { display: none; }
+  .topbar { gap: 6px; top: 10px; left: 8px; right: 8px; }
+  .ghost { padding: 7px 10px; }
 }

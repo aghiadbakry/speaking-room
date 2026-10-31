@@ -1,4 +1,5 @@
-/* One Three.js hall for Normal mode and, when a headset is present, WebXR.
+/* One Three.js hall for the screen, a WebXR headset, and a phone holder.
+   The holder splits the picture for each eye and follows the phone's motion sensor.
    People are Quaternius characters, CC0. */
 import * as THREE from "three";
 import { GLTFLoader } from "/static/vendor/loaders/GLTFLoader.js";
@@ -46,6 +47,19 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
   let renderer;
   let scene;
   let camera;
+  let phoneMode = false;
+  let phoneReady = false;
+  let phoneStereo = null;
+  let phoneRatio = 0;
+  let phoneArm = 0;
+  let phoneClickAt = 0;
+  const phoneOffset = new THREE.Quaternion();
+  const phoneQuat = new THREE.Quaternion();
+  const phoneEuler = new THREE.Euler();
+  const phoneScreen = new THREE.Quaternion();
+  const phoneZee = new THREE.Vector3(0, 0, 1);
+  const phoneTilt = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+  const phonePad = { primary: false, back: false };
   let people = [];
   let running = false;
   let activeMember = null;
@@ -651,7 +665,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
           beginReaction(activeMember, "yield", 2.2);
         }
       }
-      if (renderer && scene && camera) renderer.render(scene, camera);
+      paint();
     }).catch((err) => {
       console.error(err);
     });
@@ -974,7 +988,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     if (!member || !member.userData.seated) return null;
     if (member.userData.role === "crowd") {
       beginReaction(member, "nod", 1.1);
-      if (renderer && scene && camera) renderer.render(scene, camera);
+      paint();
       return null;
     }
     const role = member.userData.role;
@@ -989,7 +1003,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     faceSpeaker(member);
     echoRoom(member, mood, line);
     if (line) showComment(member, line);
-    if (renderer && scene && camera) renderer.render(scene, camera);
+    paint();
     return { index: index, role: role, name: member.userData.name, line: line, mood: mood };
   }
 
@@ -1001,7 +1015,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     beginReaction(member, "nod", 1.5);
     faceSpeaker(member);
     showComment(member, line);
-    if (renderer && scene && camera) renderer.render(scene, camera);
+    paint();
     return { index: index, role: member.userData.role, name: member.userData.name, line: line, mood: "nod" };
   }
 
@@ -1270,6 +1284,224 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
     comment = sprite;
   }
 
+  function screenAngle() {
+    if (typeof window.orientation === "number") return window.orientation * Math.PI / 180;
+    const orientation = screen.orientation;
+    if (orientation && typeof orientation.angle === "number") return orientation.angle * Math.PI / 180;
+    return 0;
+  }
+
+  function readPhoneOrientation(event) {
+    if (event.alpha == null || event.beta == null || event.gamma == null) return false;
+    phoneEuler.set(
+      THREE.MathUtils.degToRad(event.beta),
+      THREE.MathUtils.degToRad(event.alpha),
+      -THREE.MathUtils.degToRad(event.gamma),
+      "YXZ"
+    );
+    phoneQuat.setFromEuler(phoneEuler);
+    phoneQuat.multiply(phoneTilt);
+    phoneQuat.multiply(phoneScreen.setFromAxisAngle(phoneZee, -screenAngle()));
+    return true;
+  }
+
+  function onPhoneOrientation(event) {
+    if (!phoneMode || !readPhoneOrientation(event)) return;
+    if (phoneReady) return;
+    camera.position.copy(camTo);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(lookTo);
+    phoneOffset.copy(camera.quaternion).multiply(phoneQuat.clone().invert());
+    phoneReady = true;
+  }
+
+  function holderPads() {
+    const state = { primary: false, back: false };
+    if (!navigator.getGamepads) return state;
+    const pads = navigator.getGamepads();
+    for (let index = 0; index < pads.length; index += 1) {
+      const pad = pads[index];
+      if (!pad || !pad.buttons) continue;
+      if (pad.buttons[0] && pad.buttons[0].pressed) state.primary = true;
+      if (pad.buttons[1] && pad.buttons[1].pressed) state.back = true;
+    }
+    return state;
+  }
+
+  function emitHolder(action) {
+    if (!renderer) return;
+    renderer.domElement.dispatchEvent(new CustomEvent("holder", { detail: { action: action } }));
+  }
+
+  function emitHolderClick(fromPointer) {
+    const now = performance.now();
+    if (fromPointer && now < phoneArm) return;
+    if (now - phoneClickAt < 450) return;
+    phoneClickAt = now;
+    emitHolder("click");
+  }
+
+  function onHolderKey(event) {
+    if (!phoneMode || event.repeat) return;
+    if (event.key === "Escape" || event.key === "Backspace" || event.key === "BrowserBack") {
+      exitHolder(false);
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      emitHolderClick();
+    }
+  }
+
+  function onFullscreenEnd() {
+    if (!phoneMode) return;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!active) exitHolder(false);
+  }
+
+  function pollHolderPad() {
+    const state = holderPads();
+    if (state.primary && !phonePad.primary) emitHolderClick();
+    if (state.back && !phonePad.back) exitHolder(false);
+    phonePad.primary = state.primary;
+    phonePad.back = state.back;
+  }
+
+  function applyPhoneLook() {
+    camera.position.copy(camTo);
+    if (!phoneReady) {
+      camera.up.set(0, 1, 0);
+      camera.lookAt(lookTo);
+      return;
+    }
+    camera.quaternion.copy(phoneOffset).multiply(phoneQuat);
+  }
+
+  function paint() {
+    if (!renderer || !scene || !camera) return;
+    if (!phoneMode) {
+      renderer.setScissorTest(false);
+      renderer.render(scene, camera);
+      return;
+    }
+    applyPhoneLook();
+    camera.updateMatrixWorld();
+    const width = renderer.domElement.clientWidth;
+    const height = renderer.domElement.clientHeight;
+    if (!width || !height || !phoneStereo) {
+      renderer.render(scene, camera);
+      return;
+    }
+    phoneStereo.aspect = 0.5;
+    phoneStereo.update(camera);
+    phoneStereo.cameraL.matrixWorldInverse.copy(phoneStereo.cameraL.matrixWorld).invert();
+    phoneStereo.cameraR.matrixWorldInverse.copy(phoneStereo.cameraR.matrixWorld).invert();
+    phoneStereo.cameraL.projectionMatrixInverse.copy(phoneStereo.cameraL.projectionMatrix).invert();
+    phoneStereo.cameraR.projectionMatrixInverse.copy(phoneStereo.cameraR.projectionMatrix).invert();
+    const half = Math.floor(width / 2);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    renderer.clear();
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+    renderer.setViewport(0, 0, half, height);
+    renderer.setScissor(0, 0, half, height);
+    renderer.render(scene, phoneStereo.cameraL);
+    renderer.setViewport(half, 0, width - half, height);
+    renderer.setScissor(half, 0, width - half, height);
+    renderer.render(scene, phoneStereo.cameraR);
+    renderer.autoClear = true;
+    renderer.setScissorTest(false);
+  }
+
+  async function allowMotion() {
+    if (!window.DeviceOrientationEvent) return false;
+    const ask = DeviceOrientationEvent.requestPermission;
+    if (typeof ask !== "function") return true;
+    try {
+      return await ask.call(DeviceOrientationEvent) === "granted";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function enterHolder() {
+    if (!renderer || !camera || phoneMode) return false;
+    if (renderer.xr && renderer.xr.isPresenting) return false;
+    if (!window.DeviceOrientationEvent) return false;
+    const needsAsk = typeof DeviceOrientationEvent.requestPermission === "function";
+    if (needsAsk && !(await allowMotion())) return false;
+    phoneMode = true;
+    phoneReady = false;
+    intro = 1;
+    camera.focus = 3;
+    camera.position.copy(camTo);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(lookTo);
+    if (!phoneStereo) {
+      phoneStereo = new THREE.StereoCamera();
+      phoneStereo.cameraL.matrixWorldAutoUpdate = false;
+      phoneStereo.cameraR.matrixWorldAutoUpdate = false;
+    }
+    phoneStereo.eyeSep = 0.064;
+    phoneStereo.aspect = 0.5;
+    phoneRatio = renderer.getPixelRatio();
+    renderer.setPixelRatio(1);
+    phoneArm = performance.now() + 1200;
+    phoneClickAt = 0;
+    const held = holderPads();
+    phonePad.primary = held.primary;
+    phonePad.back = held.back;
+    window.addEventListener("deviceorientation", onPhoneOrientation);
+    window.addEventListener("keydown", onHolderKey);
+    document.addEventListener("fullscreenchange", onFullscreenEnd);
+    document.addEventListener("webkitfullscreenchange", onFullscreenEnd);
+    document.body.classList.add("holder");
+    const stage = renderer.domElement.parentElement;
+    try {
+      if (stage.requestFullscreen) {
+        const pending = stage.requestFullscreen();
+        if (pending && pending.catch) pending.catch(() => {});
+      } else if (stage.webkitRequestFullscreen) {
+        stage.webkitRequestFullscreen();
+      }
+    } catch (err) { /* the split view still works in the page */ }
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        const locking = screen.orientation.lock("landscape");
+        if (locking && locking.catch) locking.catch(() => {});
+      }
+    } catch (err) { /* the phone can be turned by hand */ }
+    resize();
+    return true;
+  }
+
+  function exitHolder(quiet) {
+    if (!phoneMode) return;
+    phoneMode = false;
+    phoneReady = false;
+    window.removeEventListener("deviceorientation", onPhoneOrientation);
+    window.removeEventListener("keydown", onHolderKey);
+    document.removeEventListener("fullscreenchange", onFullscreenEnd);
+    document.removeEventListener("webkitfullscreenchange", onFullscreenEnd);
+    document.body.classList.remove("holder");
+    if (renderer && phoneRatio) renderer.setPixelRatio(phoneRatio);
+    phoneRatio = 0;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    if (active) {
+      const leave = document.exitFullscreen || document.webkitExitFullscreen;
+      if (leave) {
+        const pending = leave.call(document);
+        if (pending && pending.catch) pending.catch(() => {});
+      }
+    }
+    try {
+      if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+    } catch (err) { /* the lock was already released */ }
+    if (renderer) resize();
+    if (!quiet) emitHolder("exit");
+  }
+
   function tick() {
     if (!running) return;
     const now = performance.now();
@@ -1298,7 +1530,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       comment.position.y = (comment.parent && comment.parent.userData.bubbleY || 1.62) + Math.sin(time * 2.2) * 0.02;
     }
     const presenting = renderer.xr && renderer.xr.isPresenting;
-    if (!presenting && presentation === "lobby") {
+    if (!phoneMode && !presenting && presentation === "lobby") {
       const orbit = time * 0.16;
       camera.position.set(-1.65 + Math.sin(orbit) * 0.12, 1.72, 2.85 + Math.cos(orbit) * 0.1);
       camera.lookAt(0.1, 1.15, -0.35);
@@ -1320,12 +1552,15 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
           renderer.toneMappingExposure += (exposure - renderer.toneMappingExposure) * Math.min(1, delta * 0.7);
         }
       }
-      const ease = 1 - Math.pow(1 - intro, 3);
-      camera.position.lerpVectors(camFrom, camTo, ease);
-      lookNow.lerpVectors(lookFrom, lookTo, ease);
-      camera.lookAt(lookNow);
+      if (!phoneMode) {
+        const ease = 1 - Math.pow(1 - intro, 3);
+        camera.position.lerpVectors(camFrom, camTo, ease);
+        lookNow.lerpVectors(lookFrom, lookTo, ease);
+        camera.lookAt(lookNow);
+      }
     }
-    renderer.render(scene, camera);
+    if (phoneMode) pollHolderPad();
+    paint();
   }
 
   function audienceList() {
@@ -1352,6 +1587,10 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       const sound = ensureSound();
       if (sound && sound.state === "suspended") sound.resume();
       onCanvasClick = (event) => {
+        if (phoneMode) {
+          emitHolderClick(true);
+          return;
+        }
         const index = pickPerson(event);
         if (index < 0) return;
         const member = people[index];
@@ -1416,7 +1655,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       faceSpeaker(activeMember);
       echoRoom(activeMember, mood || "nod", line);
       if (line) showComment(activeMember, line);
-      if (renderer && scene && camera) renderer.render(scene, camera);
+      paint();
       return people.indexOf(activeMember);
     },
     finale: function (won) {
@@ -1482,7 +1721,15 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
         playRoomSound("chair", watcher.position.x);
       }
     },
+    inHolder: function () {
+      return phoneMode;
+    },
+    enterHolder: enterHolder,
+    exitHolder: function () {
+      exitHolder(false);
+    },
     async enterHeadset() {
+      if (phoneMode) return false;
       if (!navigator.xr || !renderer) return false;
       try {
         const supported = await navigator.xr.isSessionSupported("immersive-vr");
@@ -1495,6 +1742,7 @@ import { clone as cloneSkeleton } from "/static/vendor/utils/SkeletonUtils.js";
       }
     },
     close: function () {
+      exitHolder(true);
       running = false;
       generation += 1;
       mixers = [];
